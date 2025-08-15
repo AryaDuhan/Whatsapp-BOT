@@ -11,6 +11,7 @@ A secure, intelligent, and reliable WhatsApp bot designed to help students effor
 - **⚠️ Low Attendance Alerts**: The bot proactively warns you if your attendance for any subject drops below 75%.
 - **💬 Natural Language Commands**: Add your schedule using simple, human-readable commands (e.g., `/add Math on Monday at 10:00 for 2`).
 - **🌍 Full Timezone Support**: Configure your local timezone to ensure reminders are always accurate, no matter where you are.
+- **✅ Confirmation for Subject Removal**: To prevent accidental deletions, the bot asks for a "yes" or "no" confirmation before removing a subject from your schedule.
 
 ## 🛡️ Enterprise-Grade Security
 
@@ -29,8 +30,7 @@ This bot was built with a security-first approach, implementing multiple layers 
 
 A log of issues that have been resolved to improve bot stability and user experience.
 
-- **Invalid Command Flag:** Fixed a bug where the `/drop` command was incorrectly flagged as a malicious pattern. The command has been renamed to `/remove` to prevent security conflicts.
-- **Test Command Failures:** Resolved issues where the `/testconfirm` command would either crash or fail to send a confirmation due to initialization errors and missing attendance records.
+- **Image Parsing Crash:** Fixed a critical bug that caused the bot to crash when it received an image because the `downloadMedia` function was not accessible.
 - **Media Message Crash:** Fixed a crash that occurred when a user sent a media file (like an image).
 - **Command Crash:** Resolved an error that caused the bot to crash whenever any command was used.
 - **Non-Command Message Crash:** Corrected a bug that made the bot crash when receiving any regular text message.
