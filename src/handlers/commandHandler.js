@@ -19,7 +19,7 @@ class CommandHandler {
       "/start": this.handleStart.bind(this),
       "/help": this.handleHelp.bind(this),
       "/add": this.handleAdd.bind(this),
-      "/drop": this.handleDrop.bind(this),
+      "/remove": this.handleRemove.bind(this),
       "/show": this.handleShow.bind(this),
       "/list": this.handleList.bind(this),
       "/timezone": this.handleTimezone.bind(this),
@@ -90,7 +90,7 @@ class CommandHandler {
 • */add <subject> on <day> at <time> for <hours>*
   Example: /add Mathematics on Monday at 10:00 for 2
 
-• */drop <subject>* - Remove a subject
+• */remove <subject>* - Remove a subject
 • */list* - Show all your subjects
 
 📸 *AI Timetable Parser:*
@@ -188,15 +188,15 @@ class CommandHandler {
     }
   }
 
-  async handleDrop(message, args, user) {
+  async handleRemove(message, args, user) {
     const subjectName = args.join(" ").trim();
 
     if (!subjectName) {
       await this.client.sendMessage(
         message.from,
-        " *Drop a Subject*\n\n" +
-          "Format: */drop <subject name>*\n\n" +
-          "Example: /drop Mathematics"
+        " *Remove a Subject*\n\n" +
+          "Format: */remove <subject name>*\n\n" +
+          "Example: /remove Mathematics"
       );
       return;
     }
@@ -217,15 +217,15 @@ class CommandHandler {
 
       await this.client.sendMessage(
         message.from,
-        `✅ *Subject Dropped*\n\n` +
+        `✅ *Subject Removed*\n\n` +
           `📚 "${subject.subjectName}" has been removed from your schedule.\n\n` +
           `Your attendance history has been preserved.`
       );
     } catch (error) {
-      console.error("Error dropping subject:", error);
+      console.error("Error removing subject:", error);
       await this.client.sendMessage(
         message.from,
-        "❌ Sorry, there was an error dropping the subject. Please try again."
+        "❌ Sorry, there was an error removing the subject. Please try again."
       );
     }
   }
