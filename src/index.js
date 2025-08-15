@@ -53,7 +53,10 @@ class AttendanceBot {
     });
 
     // handlers with security middleware
-    this.commandHandler = new CommandHandler(this.client);
+    this.commandHandler = new CommandHandler(
+      this.client,
+      this.schedulerService
+    );
     this.messageHandler = new MessageHandler(this.client);
     this.schedulerService = new SchedulerService();
     this.databaseService = new DatabaseService();
@@ -92,6 +95,7 @@ class AttendanceBot {
     this.client.on("message", async (message) => {
       const startTime = Date.now();
       let userId = null;
+      let sanitizedMessage; // Define sanitizedMessage in the outer scope
 
       try {
         // ignore group msgs
@@ -155,7 +159,8 @@ class AttendanceBot {
           }
 
           // for media messages ensure body exists
-          const sanitizedMessage = {
+          sanitizedMessage = {
+            // Assign to the outer scope variable
             ...message,
             body: message.body || "",
           };
@@ -169,13 +174,7 @@ class AttendanceBot {
           // process media message
           await this.messageHandler.handleMessage(
             sanitizedMessage,
-            this.client,
-            {
-              rateLimiter: this.rateLimiter,
-              validator: this.inputValidator,
-              security: this.securityManager,
-              logger: this.logger,
-            }
+            this.client
           );
         } else {
           // handle text messages
@@ -236,7 +235,8 @@ class AttendanceBot {
           }
 
           // sanitized input
-          const sanitizedMessage = {
+          sanitizedMessage = {
+            // Assign to the outer scope variable
             ...message,
             body: inputValidation.sanitized,
           };
@@ -249,26 +249,11 @@ class AttendanceBot {
 
           // process message
           if (sanitizedMessage.body.startsWith("/")) {
-            await this.commandHandler.handleCommand(
-              sanitizedMessage,
-              this.client,
-              {
-                rateLimiter: this.rateLimiter,
-                validator: this.inputValidator,
-                security: this.securityManager,
-                logger: this.logger,
-              }
-            );
+            await this.commandHandler.handleCommand(sanitizedMessage);
           } else {
             await this.messageHandler.handleMessage(
               sanitizedMessage,
-              this.client,
-              {
-                rateLimiter: this.rateLimiter,
-                validator: this.inputValidator,
-                security: this.securityManager,
-                logger: this.logger,
-              }
+              this.client
             );
           }
         }
@@ -280,9 +265,7 @@ class AttendanceBot {
           : message.body?.startsWith("/")
           ? "commands"
           : "messages";
-        const messageLength = message.hasMedia
-          ? message.body?.length || 0
-          : sanitizedMessage?.body?.length || 0;
+        const messageLength = sanitizedMessage?.body?.length || 0;
 
         this.logger.performance("MESSAGE_PROCESSING", duration, {
           userId,

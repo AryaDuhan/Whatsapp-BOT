@@ -22,28 +22,38 @@ class MessageHandler {
     this.logger = getLogger();
   }
 
-  async handleMessage(message, client) {
+  async handleMessage(message) {
     const userId = message.from.replace("@c.us", "");
     const messageBody = message.body?.trim().toLowerCase() || "";
 
     // get user
     let user = await User.findByWhatsAppId(userId);
 
-    // handle registration
-    if (!user || !user.isFullyRegistered()) {
-      await this.handleRegistrationFlow(message, client, user, messageBody);
+    // if the user does not exist in the database at all, they haven't used /start yet.
+    if (!user) {
+      await this.client.sendMessage(
+        message.from,
+        "👋 Welcome! You need to register first to use this bot.\n\n" +
+          "Please type */start* to begin registration."
+      );
+      return;
+    }
+
+    // If the user exists but is not fully registered, they are in the registration process.
+    if (!user.isFullyRegistered()) {
+      await this.handleRegistrationFlow(message, user, messageBody);
       return;
     }
 
     // handle image messages (timetable parsing)
     if (message.hasMedia && message.type === "image") {
-      await this.handleTimetableImage(message, client, user);
+      await this.handleTimetableImage(message, this.client, user);
       return;
     }
 
     // handle attendance response
     if (this.isAttendanceResponse(messageBody)) {
-      await this.handleAttendanceResponse(message, client, user, messageBody);
+      await this.handleAttendanceResponse(message, user, messageBody);
       return;
     }
 
@@ -51,25 +61,19 @@ class MessageHandler {
     if (this.isTimetableConfirmationResponse(messageBody)) {
       await this.handleTimetableConfirmationResponse(
         message,
-        client,
+        this.client,
         user,
         messageBody
       );
       return;
     }
 
-    // handle general conversation
-    await this.handleGeneralMessage(message, client, user, messageBody);
+    // handle general conversation for registered users
+    await this.handleGeneralMessage(message, this.client, user, messageBody);
   }
 
-  async handleRegistrationFlow(message, client, user, messageBody) {
-    const userId = message.from.replace("@c.us", "");
-
-    if (!user) {
-      // create new user if doesn't exist
-      user = User.createNewUser(userId);
-    }
-
+  async handleRegistrationFlow(message, user, messageBody) {
+    //handles users who have started the process
     switch (user.registrationStep) {
       case "name":
         if (messageBody.length < 2 || messageBody.length > 50) {
@@ -255,9 +259,8 @@ class MessageHandler {
       ...ATTENDANCE_RESPONSES.NEGATIVE,
     ];
 
-    return allResponses.some(
-      (response) => messageBody === response || messageBody.includes(response)
-    );
+    // check for an exact match
+    return allResponses.includes(messageBody);
   }
 
   parseAttendanceResponse(messageBody) {

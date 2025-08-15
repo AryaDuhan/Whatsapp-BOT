@@ -8,8 +8,13 @@ const moment = require("moment-timezone");
 
 class CommandHandler {
   // accept client in the constructor
-  constructor(client) {
-    this.client = client; // store the client
+  constructor(client, schedulerService) {
+    // store the client
+    this.client = client;
+
+    // store the scheduler service
+    this.schedulerService = schedulerService;
+
     this.commands = {
       "/start": this.handleStart.bind(this),
       "/help": this.handleHelp.bind(this),
@@ -19,6 +24,8 @@ class CommandHandler {
       "/list": this.handleList.bind(this),
       "/timezone": this.handleTimezone.bind(this),
       "/settings": this.handleSettings.bind(this),
+      "/deleteuser": this.handleDeleteUser.bind(this),
+      "/testconfirm": this.handleTestConfirm.bind(this),
     };
   }
 
@@ -31,7 +38,7 @@ class CommandHandler {
     let user = await User.findByWhatsAppId(userId);
 
     if (!user || !user.isFullyRegistered()) {
-      if (command !== "/start") {
+      if (command.toLowerCase() !== "/start") {
         // use client.sendMessage
         await this.client.sendMessage(
           message.from,
@@ -99,6 +106,7 @@ class CommandHandler {
 ⚙️ *Settings:*
 • */timezone <timezone>* - Set your timezone
 • */settings* - View/change preferences
+• */deleteuser* - Delete your account and all data
 
 💡 *Tips:*
 - I'll remind you 10 minutes before each class
@@ -186,7 +194,7 @@ class CommandHandler {
     if (!subjectName) {
       await this.client.sendMessage(
         message.from,
-        "� *Drop a Subject*\n\n" +
+        " *Drop a Subject*\n\n" +
           "Format: */drop <subject name>*\n\n" +
           "Example: /drop Mathematics"
       );
@@ -391,6 +399,98 @@ class CommandHandler {
       message.from,
       "❓ Unknown command.\n\n" + "Type */help* to see all available commands."
     );
+  }
+
+  async handleDeleteUser(message, args, user) {
+    const confirmationPhrase = "confirmed"; // Changed from "delete my account"
+    const userInput = args.join(" ").trim();
+
+    if (userInput.toLowerCase() !== confirmationPhrase) {
+      await this.client.sendMessage(
+        message.from,
+        "*⚠️ This is an irreversible action!* All of your data will be permanently deleted.\n\n" +
+          "To confirm, please type the following phrase exactly as shown:\n" +
+          `*/deleteuser ${confirmationPhrase}*` // Updated the example text
+      );
+      return;
+    }
+
+    try {
+      const userId = user._id;
+      const userName = user.name;
+
+      const deleted = await User.deleteUserAndData(userId);
+
+      if (deleted) {
+        await this.client.sendMessage(
+          message.from,
+          `✅ *Account Deleted Successfully.*\n\n` +
+            `All data associated with ${userName} has been permanently removed. We're sorry to see you go!`
+        );
+      } else {
+        await this.client.sendMessage(
+          message.from,
+          "❌ Could not find a user account to delete."
+        );
+      }
+    } catch (error) {
+      console.error("Error deleting user:", error);
+      await this.client.sendMessage(
+        message.from,
+        "❌ An error occurred while trying to delete your account. Please contact support."
+      );
+    }
+  }
+
+  async handleTestConfirm(message, args, user) {
+    // only run this command in the development environment
+    if (process.env.NODE_ENV !== "development") {
+      // in production, treat it as an unknown command
+      await this.handleUnknownCommand(message);
+      return;
+    }
+
+    const subjectName = args.join(" ").trim();
+
+    if (!subjectName) {
+      await this.client.sendMessage(
+        message.from,
+        "Please specify a subject to test.\n\n*Example:* `/testconfirm Maths`"
+      );
+      return;
+    }
+
+    try {
+      const subject = await Subject.findByUserAndName(user._id, subjectName);
+
+      if (!subject) {
+        await this.client.sendMessage(
+          message.from,
+          `❌ Subject "${subjectName}" not found.`
+        );
+        return;
+      }
+
+      // manually trigger the confirmation message for the specified subject
+      await this.client.sendMessage(
+        message.from,
+        `✅ Forcing attendance confirmation for *${subject.subjectName}*...`
+      );
+
+      // use the current time to end class
+      const now = moment().tz(user.timezone);
+      await this.schedulerService.sendAttendanceConfirmation(
+        user,
+        subject,
+        now
+      );
+    } catch (error) {
+      console.error("Error during test confirmation:", error);
+      await this.client.sendMessage(
+        message.from,
+        "❌ An error occurred while running the test."
+      );
+    }
   }
 
   parseAddCommand(input) {

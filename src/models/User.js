@@ -67,4 +67,16 @@ userSchema.statics.createNewUser = function (whatsappId, name = null) {
   });
 };
 
+userSchema.statics.deleteUserAndData = async function (userId) {
+  const Subject = mongoose.model("Subject");
+  const AttendanceRecord = mongoose.model("AttendanceRecord");
+  // delete all attendance records for the user
+  await AttendanceRecord.deleteMany({ userId: userId });
+  // delete all subjects for the user
+  await Subject.deleteMany({ userId: userId });
+  // delete the user
+  const result = await this.deleteOne({ _id: userId });
+  return result.deletedCount > 0;
+};
+
 module.exports = mongoose.model("User", userSchema);
