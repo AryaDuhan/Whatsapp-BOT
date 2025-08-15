@@ -1,0 +1,61 @@
+version: "3.8"
+
+services:
+  # mongoDB database
+  mongodb:
+    image: mongo:6.0
+    container_name: attendance-bot-db
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: password123
+      MONGO_INITDB_DATABASE: attendance_bot
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+      - ./mongo-init.js:/docker-entrypoint-initdb.d/mongo-init.js:ro
+    networks:
+      - attendance-network
+
+  # whatsApp attendance bot
+  attendance-bot:
+    build:
+      context: ..
+      dockerfile: deployment/Dockerfile
+    container_name: attendance-bot-app
+    restart: unless-stopped
+    environment:
+      MONGODB_URI: mongodb://admin:password123@mongodb:27017/attendance_bot?authSource=admin
+      BOT_NAME: AttendanceBot
+      DEFAULT_TIMEZONE: Asia/Kolkata
+      NODE_ENV: production
+      PORT: 3000
+      REMINDER_MINUTES_BEFORE: 10
+      CONFIRMATION_MINUTES_AFTER: 10
+      ABSENCE_TIMEOUT_HOURS: 2
+      LOW_ATTENDANCE_THRESHOLD: 75
+    ports:
+      - "3000:3000"
+    volumes:
+      - whatsapp_session:/app/whatsapp-session
+    depends_on:
+      - mongodb
+    networks:
+      - attendance-network
+    healthcheck:
+      test: ["CMD", "node", "-e", "console.log('Health check passed')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+volumes:
+  mongodb_data:
+    driver: local
+  whatsapp_session:
+    driver: local
+
+networks:
+  attendance-network:
+    driver: bridge
