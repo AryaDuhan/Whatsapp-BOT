@@ -17,6 +17,7 @@ class MessageHandler {
     // store pending timetable confirmations
     this.pendingTimetableConfirmations = new Map();
     this.timetableParser = new TimetableParserService();
+    this.pendingRemoveConfirmations = new Map();
 
     // init logger
     this.logger = getLogger();
@@ -48,6 +49,16 @@ class MessageHandler {
     // handle image messages (timetable parsing)
     if (message.hasMedia && message.type === "image") {
       await this.handleTimetableImage(message, this.client, user);
+      return;
+    }
+
+    // check for pending subject removal confirmation
+    if (
+      this.pendingRemoveConfirmations.has(userId) &&
+      (ATTENDANCE_RESPONSES.POSITIVE.includes(messageBody) ||
+        ATTENDANCE_RESPONSES.NEGATIVE.includes(messageBody))
+    ) {
+      await this.handleRemoveConfirmationResponse(message, user, messageBody);
       return;
     }
 
@@ -219,6 +230,64 @@ class MessageHandler {
       await this.client.sendMessage(
         message.from,
         "❌ Sorry, there was an error recording your attendance. Please try again."
+      );
+    }
+  }
+
+  async handleRemoveConfirmationResponse(message, user, messageBody) {
+    const userId = user._id;
+    const pendingConfirmation = this.pendingRemoveConfirmations.get(userId);
+
+    const confirmationExpires = 2 * 60 * 1000;
+    if (Date.now() - pendingConfirmation.timestamp > confirmationExpires) {
+      this.pendingRemoveConfirmations.delete(userId);
+      await this.client.sendMessage(
+        message.from,
+        "⏰ Confirmation timed out. Please use the /remove command again if you still wish to remove the subject."
+      );
+      return;
+    }
+
+    const isConfirmed = ATTENDANCE_RESPONSES.POSITIVE.includes(
+      messageBody.toLowerCase().trim()
+    );
+
+    // clear the pending confirmation immediately
+    this.pendingRemoveConfirmations.delete(userId);
+
+    if (isConfirmed) {
+      try {
+        const subject = await Subject.findById(pendingConfirmation.subjectId);
+        if (!subject || subject.userId.toString() !== userId) {
+          await this.client.sendMessage(
+            message.from,
+            "❌ Error: Subject not found or it does not belong to you."
+          );
+          return;
+        }
+
+        subject.isActive = false;
+        await subject.save();
+
+        await this.client.sendMessage(
+          message.from,
+          `✅ *Subject Removed*\n\n` +
+            `📚 "${subject.subjectName}" has been removed from your schedule.\n\n` +
+            `Your attendance history has been preserved.`
+        );
+      } catch (error) {
+        this.logger.error("Error confirming subject removal:", error, {
+          userId,
+        });
+        await this.client.sendMessage(
+          message.from,
+          "❌ An error occurred while removing the subject."
+        );
+      }
+    } else {
+      await this.client.sendMessage(
+        message.from,
+        `👍 Removal of "*${pendingConfirmation.subjectName}*" has been cancelled.`
       );
     }
   }

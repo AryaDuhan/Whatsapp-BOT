@@ -2,18 +2,19 @@ const User = require("../models/User");
 const Subject = require("../models/Subject");
 const AttendanceRecord = require("../models/AttendanceRecord");
 const Helpers = require("../utils/helpers");
-const { MESSAGE_TEMPLATES, VALIDATION } = require("../utils/constants");
+const {
+  MESSAGE_TEMPLATES,
+  VALIDATION,
+  COMMAND_PATTERNS,
+} = require("../utils/constants");
 const compromise = require("compromise");
 const moment = require("moment-timezone");
 
 class CommandHandler {
-  // accept client in the constructor
-  constructor(client, schedulerService) {
-    // store the client
+  constructor(client, schedulerService, messageHandler) {
     this.client = client;
-
-    // store the scheduler service
     this.schedulerService = schedulerService;
+    this.messageHandler = messageHandler;
 
     this.commands = {
       "/start": this.handleStart.bind(this),
@@ -26,10 +27,11 @@ class CommandHandler {
       "/settings": this.handleSettings.bind(this),
       "/deleteuser": this.handleDeleteUser.bind(this),
       "/testconfirm": this.handleTestConfirm.bind(this),
+      "/testalert": this.handleTestAlert.bind(this),
+      "/testreminder": this.handleTestReminder.bind(this),
     };
   }
 
-  // remove client
   async handleCommand(message) {
     const userId = message.from.replace("@c.us", "");
     const messageBody = message.body.trim();
@@ -39,7 +41,6 @@ class CommandHandler {
 
     if (!user || !user.isFullyRegistered()) {
       if (command.toLowerCase() !== "/start") {
-        // use client.sendMessage
         await this.client.sendMessage(
           message.from,
           "👋 Welcome! You need to register first to use this bot.\n\n" +
@@ -82,7 +83,7 @@ class CommandHandler {
     );
   }
 
-  async handleHelp(message) {
+  async handleHelp(message, args, user) {
     const helpText = `
 🤖 *AttendanceBot Help*
 
@@ -212,20 +213,24 @@ class CommandHandler {
         return;
       }
 
-      subject.isActive = false;
-      await subject.save();
+      const userId = user._id;
+      this.messageHandler.pendingRemoveConfirmations.set(userId, {
+        subjectId: subject._id,
+        subjectName: subject.subjectName,
+        timestamp: Date.now(),
+      });
 
       await this.client.sendMessage(
         message.from,
-        `✅ *Subject Removed*\n\n` +
-          `📚 "${subject.subjectName}" has been removed from your schedule.\n\n` +
-          `Your attendance history has been preserved.`
+        `⚠️ Are you sure you want to remove the subject "*${subject.subjectName}*"?\n\n` +
+          `This action cannot be undone.\n\n` +
+          `Reply with *"yes"* to confirm or *"no"* to cancel.`
       );
     } catch (error) {
-      console.error("Error removing subject:", error);
+      console.error("Error initiating subject removal:", error);
       await this.client.sendMessage(
         message.from,
-        "❌ Sorry, there was an error removing the subject. Please try again."
+        "❌ Sorry, there was an error trying to remove the subject. Please try again."
       );
     }
   }
@@ -402,7 +407,7 @@ class CommandHandler {
   }
 
   async handleDeleteUser(message, args, user) {
-    const confirmationPhrase = "confirmed"; // Changed from "delete my account"
+    const confirmationPhrase = "confirmed";
     const userInput = args.join(" ").trim();
 
     if (userInput.toLowerCase() !== confirmationPhrase) {
@@ -410,7 +415,7 @@ class CommandHandler {
         message.from,
         "*⚠️ This is an irreversible action!* All of your data will be permanently deleted.\n\n" +
           "To confirm, please type the following phrase exactly as shown:\n" +
-          `*/deleteuser ${confirmationPhrase}*` // Updated the example text
+          `*/deleteuser ${confirmationPhrase}*`
       );
       return;
     }
@@ -443,11 +448,8 @@ class CommandHandler {
   }
 
   async handleTestConfirm(message, args, user) {
-    // only run this command in the development environment
     if (process.env.NODE_ENV !== "development") {
-      // in production, treat it as an unknown command
-      await this.handleUnknownCommand(message);
-      return;
+      return this.handleUnknownCommand(message);
     }
 
     const subjectName = args.join(" ").trim();
@@ -471,14 +473,37 @@ class CommandHandler {
         return;
       }
 
-      // manually trigger the confirmation message for the specified subject
       await this.client.sendMessage(
         message.from,
         `✅ Forcing attendance confirmation for *${subject.subjectName}*...`
       );
 
-      // use the current time to end class
       const now = moment().tz(user.timezone);
+      const today = now.clone().startOf("day");
+
+      let record = await AttendanceRecord.findOne({
+        userId: user._id,
+        subjectId: subject._id,
+        date: {
+          $gte: today.toDate(),
+          $lt: today.clone().add(1, "day").toDate(),
+        },
+      });
+
+      if (record) {
+        record.status = "pending";
+        record.confirmationSent = false;
+        await record.save();
+      } else {
+        record = await AttendanceRecord.create({
+          userId: user._id,
+          subjectId: subject._id,
+          date: today.toDate(),
+          scheduledTime: now.toDate(),
+          status: "pending",
+        });
+      }
+
       await this.schedulerService.sendAttendanceConfirmation(
         user,
         subject,
@@ -493,14 +518,100 @@ class CommandHandler {
     }
   }
 
+  async handleTestAlert(message, args, user) {
+    if (process.env.NODE_ENV !== "development") {
+      return this.handleUnknownCommand(message);
+    }
+
+    const subjectName = args.join(" ").trim();
+    if (!subjectName) {
+      return this.client.sendMessage(
+        message.from,
+        "Please specify a subject for the alert.\n\n*Example:* `/testalert Maths`"
+      );
+    }
+
+    try {
+      const subject = await Subject.findByUserAndName(user._id, subjectName);
+      if (!subject) {
+        return this.client.sendMessage(
+          message.from,
+          `❌ Subject "${subjectName}" not found.`
+        );
+      }
+
+      // store original values
+      const originalAttended = subject.attendedClasses;
+      const originalTotal = subject.totalClasses;
+
+      // set dummy data for low attendance
+      subject.attendedClasses = 7;
+      subject.totalClasses = 10; // this is 70%
+
+      await this.client.sendMessage(
+        message.from,
+        `✅ Forcing low attendance alert for *${subject.subjectName}*...`
+      );
+      await this.schedulerService.sendLowAttendanceAlert(user, [subject]);
+
+      // restore original values
+      subject.attendedClasses = originalAttended;
+      subject.totalClasses = originalTotal;
+    } catch (error) {
+      console.error("Error during test alert:", error);
+      await this.client.sendMessage(
+        message.from,
+        "❌ An error occurred while running the test alert."
+      );
+    }
+  }
+
+  async handleTestReminder(message, args, user) {
+    if (process.env.NODE_ENV !== "development") {
+      return this.handleUnknownCommand(message);
+    }
+
+    const subjectName = args.join(" ").trim();
+    if (!subjectName) {
+      return this.client.sendMessage(
+        message.from,
+        "Please specify a subject for the reminder.\n\n*Example:* `/testreminder Maths`"
+      );
+    }
+
+    try {
+      const subject = await Subject.findByUserAndName(user._id, subjectName);
+      if (!subject) {
+        return this.client.sendMessage(
+          message.from,
+          `❌ Subject "${subjectName}" not found.`
+        );
+      }
+
+      await this.client.sendMessage(
+        message.from,
+        `✅ Forcing class reminder for *${subject.subjectName}*...`
+      );
+
+      const nextClassTime = subject.getNextClassTime(user.timezone);
+      await this.schedulerService.sendClassReminder(
+        user,
+        subject,
+        nextClassTime
+      );
+    } catch (error) {
+      console.error("Error during test reminder:", error);
+      await this.client.sendMessage(
+        message.from,
+        "❌ An error occurred while running the test reminder."
+      );
+    }
+  }
+
   parseAddCommand(input) {
     try {
       const normalizedInput = input.toLowerCase().trim();
-
-      const patterns = [
-        /^(.+?)\s+on\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\s+at\s+(\d{1,2}:?\d{0,2}(?:am|pm)?)\s+for\s+(\d+(?:\.\d+)?)\s*(?:hours?|hrs?|h)?$/i,
-        /^(.+?)\s+(mon|tue|wed|thu|fri|sat|sun|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\s+(\d{1,2}:?\d{0,2}(?:am|pm)?)\s+(\d+(?:\.\d+)?)\s*(?:hours?|hrs?|h)?$/i,
-      ];
+      const patterns = COMMAND_PATTERNS.ADD_SUBJECT;
 
       for (const pattern of patterns) {
         const match = normalizedInput.match(pattern);

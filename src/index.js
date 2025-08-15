@@ -53,12 +53,13 @@ class AttendanceBot {
     });
 
     // handlers with security middleware
+    this.schedulerService = new SchedulerService();
+    this.messageHandler = new MessageHandler(this.client);
     this.commandHandler = new CommandHandler(
       this.client,
-      this.schedulerService
+      this.schedulerService,
+      this.messageHandler
     );
-    this.messageHandler = new MessageHandler(this.client);
-    this.schedulerService = new SchedulerService();
     this.databaseService = new DatabaseService();
 
     //globally accessible

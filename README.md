@@ -12,7 +12,7 @@ A secure, intelligent, and reliable WhatsApp bot designed to help students effor
 - **💬 Natural Language Commands**: Add your schedule using simple, human-readable commands (e.g., `/add Math on Monday at 10:00 for 2`).
 - **🌍 Full Timezone Support**: Configure your local timezone to ensure reminders are always accurate, no matter where you are.
 
-## 🛡️ Security
+## 🛡️ Enterprise-Grade Security
 
 This bot was built with a security-first approach, implementing multiple layers of protection to ensure your data is safe and the service is reliable.
 
@@ -29,17 +29,8 @@ This bot was built with a security-first approach, implementing multiple layers 
 
 A log of issues that have been resolved to improve bot stability and user experience.
 
-- **Media Message Crash:** Fixed a crash that occurred when a user sent a media file (like an image).
-- **Command Crash:** Resolved an error that caused the bot to crash whenever any command was used.
-- **Non-Command Message Crash:** Corrected a bug that made the bot crash when receiving any regular text message.
-- **Incorrect Name Registration:** Stopped the bot from incorrectly saving a new user's first message as their name.
-- **Faulty Attendance Keyword Matching:** Prevented the bot from misinterpreting casual words (like "yo") as an attendance confirmation.
-- **Invalid Command Flag:** Fixed a bug where the `/drop` command was incorrectly flagged as a malicious pattern. Renamed the command to `/remove` to prevent security conflicts.
-
-## 🐞 Bug Fixes
-
-A log of issues that have been resolved to improve bot stability and user experience.
-
+- **Invalid Command Flag:** Fixed a bug where the `/drop` command was incorrectly flagged as a malicious pattern. The command has been renamed to `/remove` to prevent security conflicts.
+- **Test Command Failures:** Resolved issues where the `/testconfirm` command would either crash or fail to send a confirmation due to initialization errors and missing attendance records.
 - **Media Message Crash:** Fixed a crash that occurred when a user sent a media file (like an image).
 - **Command Crash:** Resolved an error that caused the bot to crash whenever any command was used.
 - **Non-Command Message Crash:** Corrected a bug that made the bot crash when receiving any regular text message.
@@ -100,6 +91,16 @@ Here are the main commands to interact with the bot:
 | `/show`     | Displays your attendance report.                   | `/show attendance` or `/show Physics`    |
 | `/timezone` | Sets your local timezone for accurate reminders.   | `/timezone America/New_York`             |
 | `/help`     | Shows the help message with all commands.          | `/help`                                  |
+
+### 🛠️ Development & Testing Commands
+
+These commands are only available when `NODE_ENV` is set to `development`.
+
+| Command         | Description                                 | Example                 |
+| --------------- | ------------------------------------------- | ----------------------- |
+| `/testconfirm`  | Instantly sends an attendance confirmation. | `/testconfirm Maths`    |
+| `/testalert`    | Instantly triggers a low attendance alert.  | `/testalert Physics`    |
+| `/testreminder` | Instantly sends a class reminder.           | `/testreminder History` |
 
 ## ☁️ Deployment
 
