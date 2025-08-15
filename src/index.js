@@ -159,24 +159,14 @@ class AttendanceBot {
             return;
           }
 
-          // for media messages ensure body exists
-          sanitizedMessage = {
-            // Assign to the outer scope variable
-            ...message,
-            body: message.body || "",
-          };
-
           // log media activity
           this.logger.userActivity(userId, "MEDIA", {
-            messageLength: sanitizedMessage.body.length,
+            messageLength: message.body?.length || 0,
             mediaType: message.type || "unknown",
           });
 
-          // process media message
-          await this.messageHandler.handleMessage(
-            sanitizedMessage,
-            this.client
-          );
+          // process media message using the original message object
+          await this.messageHandler.handleMessage(message, this.client);
         } else {
           // handle text messages
           const messageType = message.body.startsWith("/")
@@ -266,7 +256,10 @@ class AttendanceBot {
           : message.body?.startsWith("/")
           ? "commands"
           : "messages";
-        const messageLength = sanitizedMessage?.body?.length || 0;
+        const messageLength =
+          (message.hasMedia
+            ? message.body?.length
+            : sanitizedMessage?.body?.length) || 0;
 
         this.logger.performance("MESSAGE_PROCESSING", duration, {
           userId,

@@ -39,6 +39,8 @@ class CommandHandler {
 
     let user = await User.findByWhatsAppId(userId);
 
+    const isRegistering = user && !user.isFullyRegistered();
+
     if (!user || !user.isFullyRegistered()) {
       if (command.toLowerCase() !== "/start") {
         await this.client.sendMessage(
@@ -55,6 +57,26 @@ class CommandHandler {
       await handler(message, args, user);
     } else {
       await this.handleUnknownCommand(message);
+    }
+
+    // FIX: Re-prompt if the user was in the middle of registration
+    if (isRegistering && command.toLowerCase() !== "/start") {
+      await new Promise((resolve) => setTimeout(resolve, 500)); // Small delay for better flow
+
+      switch (user.registrationStep) {
+        case "name":
+          await this.client.sendMessage(
+            message.from,
+            "To complete your registration, I still need your name."
+          );
+          break;
+        case "timezone":
+          await this.client.sendMessage(
+            message.from,
+            "By the way, I'm still waiting for your timezone to finish setting you up."
+          );
+          break;
+      }
     }
   }
 
@@ -97,7 +119,7 @@ class CommandHandler {
 📸 *AI Timetable Parser:*
 • Send a screenshot of your timetable
 • I'll show you all classes found and ask for confirmation
-• Reply "yes" to add all classes, "no" to cancel
+• Reply "confirm" to add all classes, "cancel" to cancel
 • Works with clear, readable timetable images
 
 📊 *Attendance:*
@@ -190,6 +212,20 @@ class CommandHandler {
   }
 
   async handleRemove(message, args, user) {
+    const userId = user._id;
+
+    // FIX: Check if a confirmation is already pending
+    if (this.messageHandler.pendingRemoveConfirmations.has(userId)) {
+      const pending =
+        this.messageHandler.pendingRemoveConfirmations.get(userId);
+      await this.client.sendMessage(
+        message.from,
+        `You already have a pending removal for "*${pending.subjectName}*".\n\n` +
+          `Please reply with "yes" or "no" to resolve it before removing another subject.`
+      );
+      return;
+    }
+
     const subjectName = args.join(" ").trim();
 
     if (!subjectName) {
@@ -213,7 +249,6 @@ class CommandHandler {
         return;
       }
 
-      const userId = user._id;
       this.messageHandler.pendingRemoveConfirmations.set(userId, {
         subjectId: subject._id,
         subjectName: subject.subjectName,
@@ -540,13 +575,13 @@ class CommandHandler {
         );
       }
 
-      // store original values
+      // Store original values
       const originalAttended = subject.attendedClasses;
       const originalTotal = subject.totalClasses;
 
-      // set dummy data for low attendance
+      // Set dummy data for low attendance
       subject.attendedClasses = 7;
-      subject.totalClasses = 10; // this is 70%
+      subject.totalClasses = 10; // This is 70%
 
       await this.client.sendMessage(
         message.from,
@@ -554,7 +589,7 @@ class CommandHandler {
       );
       await this.schedulerService.sendLowAttendanceAlert(user, [subject]);
 
-      // restore original values
+      // Restore original values
       subject.attendedClasses = originalAttended;
       subject.totalClasses = originalTotal;
     } catch (error) {
@@ -611,7 +646,11 @@ class CommandHandler {
   parseAddCommand(input) {
     try {
       const normalizedInput = input.toLowerCase().trim();
-      const patterns = COMMAND_PATTERNS.ADD_SUBJECT;
+
+      const patterns = [
+        /^(.+?)\s+on\s+(mon|tue|wed|thu|fri|sat|sun|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\s+at\s+(\d{1,2}:?\d{0,2}(?:am|pm)?)\s+for\s+(\d+(?:\.\d+)?)\s*(?:hours?|hrs?|h)?$/i,
+        /^(.+?)\s+(mon|tue|wed|thu|fri|sat|sun|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\s+(\d{1,2}:?\d{0,2}(?:am|pm)?)\s+(\d+(?:\.\d+)?)\s*(?:hours?|hrs?|h)?$/i,
+      ];
 
       for (const pattern of patterns) {
         const match = normalizedInput.match(pattern);

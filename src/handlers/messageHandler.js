@@ -446,8 +446,8 @@ class MessageHandler {
       if (newClasses.length > 0) {
         response += `🤔 *Do you want to add these classes?*\n\n`;
         response += `Reply with:\n`;
-        response += `• *"yes"* or *"confirm"* - Add all classes\n`;
-        response += `• *"no"* or *"cancel"* - Cancel and don't add any\n`;
+        response += `• *"confirm"* - Add all classes\n`;
+        response += `• *"cancel"* - Cancel and don't add any\n`;
         response += `• *"skip"* - Skip this confirmation (auto-add)\n\n`;
         response += `⏰ *Confirmation expires in 5 minutes*`;
       } else {
