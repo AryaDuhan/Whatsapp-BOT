@@ -36,6 +36,17 @@ A log of issues that have been resolved to improve bot stability and user experi
 - **Faulty Attendance Keyword Matching:** Prevented the bot from misinterpreting casual words (like "yo") as an attendance confirmation.
 - **Invalid Command Flag:** Fixed a bug where the `/drop` command was incorrectly flagged as a malicious pattern. Renamed the command to `/remove` to prevent security conflicts.
 
+## 🐞 Bug Fixes
+
+A log of issues that have been resolved to improve bot stability and user experience.
+
+* **Media Message Crash:** Fixed a crash that occurred when a user sent a media file (like an image).
+* **Command Crash:** Resolved an error that caused the bot to crash whenever any command was used.
+* **Non-Command Message Crash:** Corrected a bug that made the bot crash when receiving any regular text message.
+* **Incorrect Name Registration:** Stopped the bot from incorrectly saving a new user's first message as their name.
+* **Faulty Attendance Keyword Matching:** Prevented the bot from misinterpreting casual words (like "yo") as an attendance confirmation.
+
+
 ## 🚀 Getting Started
 
 ### Prerequisites
