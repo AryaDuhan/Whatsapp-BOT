@@ -12,7 +12,7 @@ A secure, intelligent, and reliable WhatsApp bot designed to help students effor
 - **💬 Natural Language Commands**: Add your schedule using simple, human-readable commands (e.g., `/add Math on Monday at 10:00 for 2`).
 - **🌍 Full Timezone Support**: Configure your local timezone to ensure reminders are always accurate, no matter where you are.
 
-## 🛡️ Enterprise-Grade Security
+## 🛡️ Security
 
 This bot was built with a security-first approach, implementing multiple layers of protection to ensure your data is safe and the service is reliable.
 
@@ -40,12 +40,11 @@ A log of issues that have been resolved to improve bot stability and user experi
 
 A log of issues that have been resolved to improve bot stability and user experience.
 
-* **Media Message Crash:** Fixed a crash that occurred when a user sent a media file (like an image).
-* **Command Crash:** Resolved an error that caused the bot to crash whenever any command was used.
-* **Non-Command Message Crash:** Corrected a bug that made the bot crash when receiving any regular text message.
-* **Incorrect Name Registration:** Stopped the bot from incorrectly saving a new user's first message as their name.
-* **Faulty Attendance Keyword Matching:** Prevented the bot from misinterpreting casual words (like "yo") as an attendance confirmation.
-
+- **Media Message Crash:** Fixed a crash that occurred when a user sent a media file (like an image).
+- **Command Crash:** Resolved an error that caused the bot to crash whenever any command was used.
+- **Non-Command Message Crash:** Corrected a bug that made the bot crash when receiving any regular text message.
+- **Incorrect Name Registration:** Stopped the bot from incorrectly saving a new user's first message as their name.
+- **Faulty Attendance Keyword Matching:** Prevented the bot from misinterpreting casual words (like "yo") as an attendance confirmation.
 
 ## 🚀 Getting Started
 
