@@ -2,34 +2,34 @@ const User = require("../models/User");
 const Subject = require("../models/Subject");
 const AttendanceRecord = require("../models/AttendanceRecord");
 const Helpers = require("../utils/helpers");
-const {
-  MESSAGE_TEMPLATES,
-  VALIDATION,
-  COMMAND_PATTERNS,
-} = require("../utils/constants");
+const { MESSAGE_TEMPLATES, VALIDATION } = require("../utils/constants");
 const compromise = require("compromise");
 const moment = require("moment-timezone");
 
 class CommandHandler {
-  constructor(client, schedulerService, messageHandler) {
+  constructor(client, schedulerService) {
     this.client = client;
     this.schedulerService = schedulerService;
-    this.messageHandler = messageHandler;
+    this.messageHandler = null; // This will be set by the main bot class
+    this.editingSessions = new Map();
 
     this.commands = {
       "/start": this.handleStart.bind(this),
       "/help": this.handleHelp.bind(this),
       "/add": this.handleAdd.bind(this),
+      "/edit": this.handleEdit.bind(this),
       "/remove": this.handleRemove.bind(this),
       "/show": this.handleShow.bind(this),
       "/list": this.handleList.bind(this),
       "/timezone": this.handleTimezone.bind(this),
       "/settings": this.handleSettings.bind(this),
       "/deleteuser": this.handleDeleteUser.bind(this),
-      "/testconfirm": this.handleTestConfirm.bind(this),
-      "/testalert": this.handleTestAlert.bind(this),
-      "/testreminder": this.handleTestReminder.bind(this),
     };
+  }
+
+  // Setter for messageHandler to resolve circular dependency
+  setMessageHandler(messageHandler) {
+    this.messageHandler = messageHandler;
   }
 
   async handleCommand(message) {
@@ -38,6 +38,12 @@ class CommandHandler {
     const [command, ...args] = messageBody.split(" ");
 
     let user = await User.findByWhatsAppId(userId);
+
+    // Prioritize handling an ongoing edit session
+    if (this.editingSessions.has(userId)) {
+      await this.handleEditConversation(message, user);
+      return;
+    }
 
     const isRegistering = user && !user.isFullyRegistered();
 
@@ -59,9 +65,8 @@ class CommandHandler {
       await this.handleUnknownCommand(message);
     }
 
-    // FIX: Re-prompt if the user was in the middle of registration
     if (isRegistering && command.toLowerCase() !== "/start") {
-      await new Promise((resolve) => setTimeout(resolve, 500)); // Small delay for better flow
+      await new Promise((resolve) => setTimeout(resolve, 500));
 
       switch (user.registrationStep) {
         case "name":
@@ -112,7 +117,7 @@ class CommandHandler {
 📚 *Subject Management:*
 • */add <subject> on <day> at <time> for <hours>*
   Example: /add Mathematics on Monday at 10:00 for 2
-
+• */edit <subject>* - Edit a subject's details
 • */remove <subject>* - Remove a subject
 • */list* - Show all your subjects
 
@@ -123,7 +128,8 @@ class CommandHandler {
 • Works with clear, readable timetable images
 
 📊 *Attendance:*
-• */show attendance* - View all attendance
+• */show attendance* - View all attendance (includes mass bunks)
+• */show attendancewithbunks* - View all attendance (excludes mass bunks)
 • */show <subject>* - View specific subject attendance
 
 ⚙️ *Settings:*
@@ -133,7 +139,7 @@ class CommandHandler {
 
 💡 *Tips:*
 - I'll remind you 10 minutes before each class
-- Reply "yes" or "no" to attendance confirmations
+- Reply "yes" or "no" or "mass bunk" to attendance confirmations
 - If you don't reply within 2 hours, you'll be marked absent
 - I'll alert you if attendance drops below 75%
 - Send a timetable image for automatic setup!
@@ -211,10 +217,242 @@ class CommandHandler {
     }
   }
 
+  async handleEdit(message, args, user) {
+    const subjectName = args.join(" ").trim();
+
+    if (!subjectName) {
+      await this.client.sendMessage(
+        message.from,
+        "📝 *Edit a Subject*\n\n" +
+          "Format: */edit <subject name>*\n\n" +
+          "Example: /edit Mathematics"
+      );
+      return;
+    }
+
+    try {
+      const subject = await Subject.findByUserAndName(user._id, subjectName);
+
+      if (!subject) {
+        await this.client.sendMessage(
+          message.from,
+          `❌ Subject "${subjectName}" not found.`
+        );
+        return;
+      }
+
+      const userId = message.from.replace("@c.us", "");
+      this.editingSessions.set(userId, { subject, stage: "menu" });
+
+      await this.client.sendMessage(
+        message.from,
+        `Editing *${subject.subjectName}*. What would you like to change?
+1. Class Name
+2. Class Timing (e.g., 8:00 to 9:00)
+3. Class Day
+4. Total Classes
+5. Attended Classes
+6. Mass Bunked Classes
+Reply with the number of the option you want to edit or 'cancel' to exit.`
+      );
+    } catch (error) {
+      console.error("Error editing subject:", error);
+      await this.client.sendMessage(
+        message.from,
+        "❌ Sorry, there was an error editing the subject. Please try again."
+      );
+    }
+  }
+
+  async handleEditConversation(message, user) {
+    const userId = message.from.replace("@c.us", "");
+    const session = this.editingSessions.get(userId);
+    if (!session) return;
+
+    const { subject, stage } = session;
+    const response = message.body.trim();
+
+    if (response.toLowerCase() === "cancel") {
+      this.editingSessions.delete(userId);
+      await this.client.sendMessage(message.from, "Editing cancelled.");
+      return;
+    }
+
+    const stages = {
+      menu: async () => {
+        const choice = parseInt(response);
+        if (isNaN(choice) || choice < 1 || choice > 6) {
+          await this.client.sendMessage(
+            message.from,
+            "Invalid choice. Please reply with a number from 1 to 6 or 'cancel'."
+          );
+          return;
+        }
+        session.stage = choice;
+        const prompts = [
+          "What is the new name for the class?",
+          "What is the new timing for the class? (e.g., 8:00 to 9:00)",
+          "What is the new day for the class? (e.g., Monday)",
+          "What is the new total number of classes?",
+          "What is the new number of attended classes?",
+          "What is the new number of mass bunked classes?",
+        ];
+        await this.client.sendMessage(message.from, prompts[choice - 1]);
+      },
+      1: async () => {
+        // Class Name
+        subject.subjectName = response;
+        await subject.save();
+        await this.client.sendMessage(
+          message.from,
+          `✅ Subject name updated to *${response}*`
+        );
+        this.returnToEditMenu(message, subject);
+      },
+      2: async () => {
+        // Class Timing
+        const [startTime, endTime] = response.split("to").map((t) => t.trim());
+        const normalizedStartTime = Helpers.normalizeTime(startTime);
+        const normalizedEndTime = Helpers.normalizeTime(endTime);
+
+        if (!normalizedStartTime || !normalizedEndTime) {
+          await this.client.sendMessage(
+            message.from,
+            "Invalid time format. Please use 'HH:MM to HH:MM'."
+          );
+          return;
+        }
+
+        const duration = moment
+          .duration(
+            moment(normalizedEndTime, "HH:mm").diff(
+              moment(normalizedStartTime, "HH:mm")
+            )
+          )
+          .asHours();
+        if (duration <= 0) {
+          await this.client.sendMessage(
+            message.from,
+            "End time must be after start time."
+          );
+          return;
+        }
+
+        subject.schedule.time = normalizedStartTime;
+        subject.schedule.duration = duration;
+        await subject.save();
+        await this.client.sendMessage(
+          message.from,
+          `✅ Subject timing updated to *${normalizedStartTime}* for *${duration}* hours.`
+        );
+        this.returnToEditMenu(message, subject);
+      },
+      3: async () => {
+        // Class Day
+        const normalizedDay = Helpers.normalizeDayName(response);
+        if (!Helpers.isValidDay(normalizedDay)) {
+          await this.client.sendMessage(
+            message.from,
+            "Invalid day. Please enter a full day name (e.g., Monday)."
+          );
+          return;
+        }
+        subject.schedule.day = normalizedDay;
+        await subject.save();
+        await this.client.sendMessage(
+          message.from,
+          `✅ Class day updated to *${normalizedDay}*`
+        );
+        this.returnToEditMenu(message, subject);
+      },
+      4: async () => {
+        // Total Classes
+        const totalClasses = parseInt(response);
+        if (isNaN(totalClasses) || totalClasses < 0) {
+          await this.client.sendMessage(
+            message.from,
+            "Invalid number. Please enter a positive number for total classes."
+          );
+          return;
+        }
+        subject.totalClasses = totalClasses;
+        await subject.save();
+        await this.client.sendMessage(
+          message.from,
+          `✅ Total classes updated to *${totalClasses}*`
+        );
+        this.returnToEditMenu(message, subject);
+      },
+      5: async () => {
+        // Attended Classes
+        const attendedClasses = parseInt(response);
+        if (
+          isNaN(attendedClasses) ||
+          attendedClasses < 0 ||
+          attendedClasses > subject.totalClasses
+        ) {
+          await this.client.sendMessage(
+            message.from,
+            "Invalid number. Attended classes cannot be negative or greater than total classes."
+          );
+          return;
+        }
+        subject.attendedClasses = attendedClasses;
+        await subject.save();
+        await this.client.sendMessage(
+          message.from,
+          `✅ Attended classes updated to *${attendedClasses}*`
+        );
+        this.returnToEditMenu(message, subject);
+      },
+      6: async () => {
+        // Mass Bunked Classes
+        const massBunkedClasses = parseInt(response);
+        if (
+          isNaN(massBunkedClasses) ||
+          massBunkedClasses < 0 ||
+          massBunkedClasses > subject.totalClasses
+        ) {
+          await this.client.sendMessage(
+            message.from,
+            "Invalid number. Mass bunked classes cannot be negative or greater than total classes."
+          );
+          return;
+        }
+        subject.massBunkedClasses = massBunkedClasses;
+        await subject.save();
+        await this.client.sendMessage(
+          message.from,
+          `✅ Mass bunked classes updated to *${massBunkedClasses}*`
+        );
+        this.returnToEditMenu(message, subject);
+      },
+    };
+
+    if (stages[stage]) {
+      await stages[stage]();
+    }
+  }
+
+  async returnToEditMenu(message, subject) {
+    const userId = message.from.replace("@c.us", "");
+    this.editingSessions.set(userId, { subject, stage: "menu" });
+    await this.client.sendMessage(
+      message.from,
+      `Anything else you would like to change for *${subject.subjectName}*?
+1. Class Name
+2. Class Timing
+3. Class Day
+4. Total Classes
+5. Attended Classes
+6. Mass Bunked Classes
+Reply with a number or 'cancel' to exit.`
+    );
+  }
+
   async handleRemove(message, args, user) {
     const userId = user._id;
 
-    // FIX: Check if a confirmation is already pending
     if (this.messageHandler.pendingRemoveConfirmations.has(userId)) {
       const pending =
         this.messageHandler.pendingRemoveConfirmations.get(userId);
@@ -275,7 +513,9 @@ class CommandHandler {
 
     try {
       if (parameter === "attendance" || parameter === "") {
-        await this.showAllAttendance(message, user);
+        await this.showAllAttendance(message, user, true);
+      } else if (parameter === "attendancewithbunks") {
+        await this.showAllAttendance(message, user, false);
       } else {
         await this.showSubjectAttendance(message, user, parameter);
       }
@@ -288,7 +528,7 @@ class CommandHandler {
     }
   }
 
-  async showAllAttendance(message, user) {
+  async showAllAttendance(message, user, withBunks) {
     const subjects = await Subject.findActiveByUser(user._id);
 
     if (subjects.length === 0) {
@@ -304,11 +544,22 @@ class CommandHandler {
     let response = "📊 *Your Attendance Overview*\n\n";
 
     for (const subject of subjects) {
-      const percentage = subject.attendancePercentage;
+      const percentage = withBunks
+        ? subject.attendancePercentage
+        : subject.attendancePercentageWithBunks;
       const status = Helpers.getAttendanceEmoji(percentage);
 
       response += `${status} *${subject.subjectName}*\n`;
-      response += `   ${subject.attendedClasses}/${subject.totalClasses} classes (${percentage}%)\n\n`;
+      if (withBunks) {
+        response += `   ${subject.attendedClasses}/${subject.totalClasses} classes (${percentage}%)\n`;
+        response += `   Mass Bunked: ${subject.massBunkedClasses} classes\n\n`;
+      } else {
+        const totalClassesWithoutBunks =
+          subject.totalClasses - subject.massBunkedClasses;
+        response += `   ${subject.attendedClasses}/${
+          totalClassesWithoutBunks > 0 ? totalClassesWithoutBunks : 0
+        } classes (${percentage}%)\n\n`;
+      }
     }
 
     response += "_💡 Type /show <subject name> for detailed view_";
@@ -328,13 +579,16 @@ class CommandHandler {
     }
 
     const percentage = subject.attendancePercentage;
+    const percentageWithBunks = subject.attendancePercentageWithBunks;
     const status = Helpers.getAttendanceEmoji(percentage);
     const nextClass = subject.getNextClassTime(user.timezone);
 
     let response = `📊 *${subject.subjectName} - Detailed View*\n\n`;
-    response += `${status} *Attendance: ${percentage}%*\n`;
+    response += `${status} *Attendance: ${percentage}%* (including mass bunks)\n`;
+    response += `*Attendance: ${percentageWithBunks}%* (excluding mass bunks)\n`;
     response += `✅ Present: ${subject.attendedClasses} classes\n`;
-    response += `❌ Total: ${subject.totalClasses} classes\n\n`;
+    response += `❌ Total: ${subject.totalClasses} classes\n`;
+    response += `🤪 Mass Bunked: ${subject.massBunkedClasses} classes\n\n`;
 
     response += `📅 *Schedule:* ${subject.schedule.day}s at ${subject.schedule.time}\n`;
     response += `⏱️ *Duration:* ${subject.schedule.duration} hour(s)\n\n`;
@@ -478,167 +732,6 @@ class CommandHandler {
       await this.client.sendMessage(
         message.from,
         "❌ An error occurred while trying to delete your account. Please contact support."
-      );
-    }
-  }
-
-  async handleTestConfirm(message, args, user) {
-    if (process.env.NODE_ENV !== "development") {
-      return this.handleUnknownCommand(message);
-    }
-
-    const subjectName = args.join(" ").trim();
-
-    if (!subjectName) {
-      await this.client.sendMessage(
-        message.from,
-        "Please specify a subject to test.\n\n*Example:* `/testconfirm Maths`"
-      );
-      return;
-    }
-
-    try {
-      const subject = await Subject.findByUserAndName(user._id, subjectName);
-
-      if (!subject) {
-        await this.client.sendMessage(
-          message.from,
-          `❌ Subject "${subjectName}" not found.`
-        );
-        return;
-      }
-
-      await this.client.sendMessage(
-        message.from,
-        `✅ Forcing attendance confirmation for *${subject.subjectName}*...`
-      );
-
-      const now = moment().tz(user.timezone);
-      const today = now.clone().startOf("day");
-
-      let record = await AttendanceRecord.findOne({
-        userId: user._id,
-        subjectId: subject._id,
-        date: {
-          $gte: today.toDate(),
-          $lt: today.clone().add(1, "day").toDate(),
-        },
-      });
-
-      if (record) {
-        record.status = "pending";
-        record.confirmationSent = false;
-        await record.save();
-      } else {
-        record = await AttendanceRecord.create({
-          userId: user._id,
-          subjectId: subject._id,
-          date: today.toDate(),
-          scheduledTime: now.toDate(),
-          status: "pending",
-        });
-      }
-
-      await this.schedulerService.sendAttendanceConfirmation(
-        user,
-        subject,
-        now
-      );
-    } catch (error) {
-      console.error("Error during test confirmation:", error);
-      await this.client.sendMessage(
-        message.from,
-        "❌ An error occurred while running the test."
-      );
-    }
-  }
-
-  async handleTestAlert(message, args, user) {
-    if (process.env.NODE_ENV !== "development") {
-      return this.handleUnknownCommand(message);
-    }
-
-    const subjectName = args.join(" ").trim();
-    if (!subjectName) {
-      return this.client.sendMessage(
-        message.from,
-        "Please specify a subject for the alert.\n\n*Example:* `/testalert Maths`"
-      );
-    }
-
-    try {
-      const subject = await Subject.findByUserAndName(user._id, subjectName);
-      if (!subject) {
-        return this.client.sendMessage(
-          message.from,
-          `❌ Subject "${subjectName}" not found.`
-        );
-      }
-
-      // Store original values
-      const originalAttended = subject.attendedClasses;
-      const originalTotal = subject.totalClasses;
-
-      // Set dummy data for low attendance
-      subject.attendedClasses = 7;
-      subject.totalClasses = 10; // This is 70%
-
-      await this.client.sendMessage(
-        message.from,
-        `✅ Forcing low attendance alert for *${subject.subjectName}*...`
-      );
-      await this.schedulerService.sendLowAttendanceAlert(user, [subject]);
-
-      // Restore original values
-      subject.attendedClasses = originalAttended;
-      subject.totalClasses = originalTotal;
-    } catch (error) {
-      console.error("Error during test alert:", error);
-      await this.client.sendMessage(
-        message.from,
-        "❌ An error occurred while running the test alert."
-      );
-    }
-  }
-
-  async handleTestReminder(message, args, user) {
-    if (process.env.NODE_ENV !== "development") {
-      return this.handleUnknownCommand(message);
-    }
-
-    const subjectName = args.join(" ").trim();
-    if (!subjectName) {
-      return this.client.sendMessage(
-        message.from,
-        "Please specify a subject for the reminder.\n\n*Example:* `/testreminder Maths`"
-      );
-    }
-
-    try {
-      const subject = await Subject.findByUserAndName(user._id, subjectName);
-      if (!subject) {
-        return this.client.sendMessage(
-          message.from,
-          `❌ Subject "${subjectName}" not found.`
-        );
-      }
-
-      await this.client.sendMessage(
-        message.from,
-        `✅ Forcing class reminder for *${subject.subjectName}*...`
-      );
-
-      const nextClassTime = subject.getNextClassTime(user.timezone);
-      await this.schedulerService.sendClassReminder(
-        user,
-        subject,
-        nextClassTime
-      );
-    } catch (error) {
-      console.error("Error during test reminder:", error);
-      await this.client.sendMessage(
-        message.from,
-        "❌ An error occurred while running the test reminder."
       );
     }
   }

@@ -4,12 +4,13 @@ A secure, intelligent, and reliable WhatsApp bot designed to help students effor
 
 ## ✨ Core Features
 
-- **🤖 Automated Attendance Tracking**: The bot automatically sends a confirmation message after your class ends. Simply reply "yes" or "no" to log your attendance.
+- **🤖 Automated Attendance Tracking**: The bot automatically sends a confirmation message after your class ends. Simply reply "yes", "no", or "mass bunk" to log your attendance.
 - **🔔 Smart Reminders**: Never miss a class again. Get a WhatsApp reminder 10 minutes before each scheduled class.
 - **📸 AI Timetable Parser**: Simply send a screenshot of your timetable, and the bot will use AI to read it, extract all your classes, and add them to your schedule automatically.
 - **📊 Detailed Reports**: Get an instant overview of your attendance for all subjects or dive deep into the statistics for a specific class.
 - **⚠️ Low Attendance Alerts**: The bot proactively warns you if your attendance for any subject drops below 75%.
 - **💬 Natural Language Commands**: Add your schedule using simple, human-readable commands (e.g., `/add Math on Monday at 10:00 for 2`).
+- **✏️ Interactive Editing**: Easily edit any detail of an existing class with the conversational `/edit` command.
 - **🌍 Full Timezone Support**: Configure your local timezone to ensure reminders are always accurate, no matter where you are.
 - **✅ Confirmation for Subject Removal**: To prevent accidental deletions, the bot asks for a "yes" or "no" confirmation before removing a subject from your schedule.
 
@@ -30,6 +31,7 @@ This bot was built with a security-first approach, implementing multiple layers 
 
 A log of issues that have been resolved to improve bot stability and user experience.
 
+- **Conversational Command Failures**: Fixed a critical bug where the bot would not recognize replies during an `/edit` session.
 - **Image Parsing Crash:** Fixed a critical bug that caused the bot to crash when it received an image because the `downloadMedia` function was not accessible.
 - **Media Message Crash:** Fixed a crash that occurred when a user sent a media file (like an image).
 - **Command Crash:** Resolved an error that caused the bot to crash whenever any command was used.
@@ -82,25 +84,17 @@ A log of issues that have been resolved to improve bot stability and user experi
 
 Here are the main commands to interact with the bot:
 
-| Command     | Description                                        | Example                                  |
-| ----------- | -------------------------------------------------- | ---------------------------------------- |
-| `/start`    | Begins the one-time registration process.          | `/start`                                 |
-| `/add`      | Adds a new subject to your schedule.               | `/add Physics on Tuesday at 3pm for 1.5` |
-| `/remove`   | Removes a subject from your schedule.              | `/remove Physics`                        |
-| `/list`     | Shows all the subjects you are currently tracking. | `/list`                                  |
-| `/show`     | Displays your attendance report.                   | `/show attendance` or `/show Physics`    |
-| `/timezone` | Sets your local timezone for accurate reminders.   | `/timezone America/New_York`             |
-| `/help`     | Shows the help message with all commands.          | `/help`                                  |
-
-### 🛠️ Development & Testing Commands
-
-These commands are only available when `NODE_ENV` is set to `development`.
-
-| Command         | Description                                 | Example                 |
-| --------------- | ------------------------------------------- | ----------------------- |
-| `/testconfirm`  | Instantly sends an attendance confirmation. | `/testconfirm Maths`    |
-| `/testalert`    | Instantly triggers a low attendance alert.  | `/testalert Physics`    |
-| `/testreminder` | Instantly sends a class reminder.           | `/testreminder History` |
+| Command                     | Description                                        | Example                                  |
+| --------------------------- | -------------------------------------------------- | ---------------------------------------- |
+| `/start`                    | Begins the one-time registration process.          | `/start`                                 |
+| `/add`                      | Adds a new subject to your schedule.               | `/add Physics on Tuesday at 3pm for 1.5` |
+| `/edit`                     | Interactively edit a subject's details.            | `/edit Physics`                          |
+| `/remove`                   | Removes a subject from your schedule.              | `/remove Physics`                        |
+| `/list`                     | Shows all the subjects you are currently tracking. | `/list`                                  |
+| `/show`                     | Displays your attendance report.                   | `/show attendance` or `/show Physics`    |
+| `/show attendancewithbunks` | Shows attendance excluding mass bunks.             | `/show attendancewithbunks`              |
+| `/timezone`                 | Sets your local timezone for accurate reminders.   | `/timezone America/New_York`             |
+| `/help`                     | Shows the help message with all commands.          | `/help`                                  |
 
 ## ☁️ Deployment
 

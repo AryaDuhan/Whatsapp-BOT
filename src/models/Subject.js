@@ -49,6 +49,11 @@ const subjectSchema = new mongoose.Schema(
       default: 0,
       min: 0,
     },
+    massBunkedClasses: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
     isActive: {
       type: Boolean,
       default: true,
@@ -66,15 +71,29 @@ subjectSchema.virtual("attendancePercentage").get(function () {
   return Math.round((this.attendedClasses / this.totalClasses) * 100);
 });
 
+// virtual for attendance percentage without bunks
+subjectSchema.virtual("attendancePercentageWithBunks").get(function () {
+  if (this.totalClasses === 0) return 0;
+  const totalClassesWithBunks = this.totalClasses - this.massBunkedClasses;
+  if (totalClassesWithBunks === 0) return 0;
+  return Math.round((this.attendedClasses / totalClassesWithBunks) * 100);
+});
+
 // ensure virtual fields are in json output
 subjectSchema.set("toJSON", { virtuals: true });
 subjectSchema.set("toObject", { virtuals: true });
 
 // instance methods
-subjectSchema.methods.markAttendance = function (isPresent = true) {
+subjectSchema.methods.markAttendance = function (
+  isPresent = true,
+  isMassBunk = false
+) {
   this.totalClasses += 1;
   if (isPresent) {
     this.attendedClasses += 1;
+  }
+  if (isMassBunk) {
+    this.massBunkedClasses += 1;
   }
   return this.save();
 };

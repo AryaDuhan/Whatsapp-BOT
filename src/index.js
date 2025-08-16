@@ -52,14 +52,15 @@ class AttendanceBot {
       },
     });
 
-    // handlers with security middleware
+    // instantiate CommandHandler first, then MessageHandler
     this.schedulerService = new SchedulerService();
-    this.messageHandler = new MessageHandler(this.client);
     this.commandHandler = new CommandHandler(
       this.client,
-      this.schedulerService,
-      this.messageHandler
+      this.schedulerService
     );
+    this.messageHandler = new MessageHandler(this.client, this.commandHandler);
+    this.commandHandler.setMessageHandler(this.messageHandler);
+
     this.databaseService = new DatabaseService();
 
     //globally accessible
@@ -96,7 +97,7 @@ class AttendanceBot {
     this.client.on("message", async (message) => {
       const startTime = Date.now();
       let userId = null;
-      let sanitizedMessage; // Define sanitizedMessage in the outer scope
+      let sanitizedMessage;
 
       try {
         // ignore group msgs
@@ -141,112 +142,14 @@ class AttendanceBot {
           return;
         }
 
-        // handle media messages
-        if (message.hasMedia) {
-          // rate limiting for media messages
-          if (this.rateLimiter.isRateLimited(userId, "media")) {
-            this.logger.security("RATE_LIMIT_EXCEEDED", {
-              userId,
-              type: "media",
-              remaining: this.rateLimiter.getRemainingRequests(userId, "media"),
-            });
+        // sanitized input
+        sanitizedMessage = messageValidation.sanitized;
 
-            const resetTime = this.rateLimiter.getResetTime(userId, "media");
-            await this.client.sendMessage(
-              message.from,
-              `⏳ Rate limit exceeded. Please wait ${resetTime} seconds before sending more media.`
-            );
-            return;
-          }
-
-          // log media activity
-          this.logger.userActivity(userId, "MEDIA", {
-            messageLength: message.body?.length || 0,
-            mediaType: message.type || "unknown",
-          });
-
-          // process media message using the original message object
-          await this.messageHandler.handleMessage(message, this.client);
+        // route message to the correct handler
+        if (sanitizedMessage.body.startsWith("/")) {
+          await this.commandHandler.handleCommand(sanitizedMessage);
         } else {
-          // handle text messages
-          const messageType = message.body.startsWith("/")
-            ? "commands"
-            : "messages";
-
-          // rate limiting
-          if (this.rateLimiter.isRateLimited(userId, messageType)) {
-            this.logger.security("RATE_LIMIT_EXCEEDED", {
-              userId,
-              type: messageType,
-              remaining: this.rateLimiter.getRemainingRequests(
-                userId,
-                messageType
-              ),
-            });
-
-            const resetTime = this.rateLimiter.getResetTime(
-              userId,
-              messageType
-            );
-            await this.client.sendMessage(
-              message.from,
-              `⏳ Rate limit exceeded. Please wait ${resetTime} seconds before sending more ${messageType}.`
-            );
-            return;
-          }
-
-          // input validation for text messages
-          const inputValidation = this.inputValidator.securityCheck(
-            message.body,
-            {
-              type: "message",
-              userId,
-            }
-          );
-
-          if (!inputValidation.isSecure) {
-            this.logger.security("MALICIOUS_INPUT_DETECTED", {
-              userId,
-              warnings: inputValidation.warnings,
-              originalInput: message.body,
-            });
-
-            // block user
-            this.securityManager.blockUser(
-              userId,
-              "Malicious input detected",
-              30 * 60 * 1000
-            );
-
-            await this.client.sendMessage(
-              message.from,
-              "🚫 Your message contains invalid content. Your account has been temporarily restricted."
-            );
-            return;
-          }
-
-          // sanitized input
-          sanitizedMessage = {
-            // Assign to the outer scope variable
-            ...message,
-            body: inputValidation.sanitized,
-          };
-
-          // log user activity
-          this.logger.userActivity(userId, messageType.toUpperCase(), {
-            messageLength: sanitizedMessage.body.length,
-            hasCommand: sanitizedMessage.body.startsWith("/"),
-          });
-
-          // process message
-          if (sanitizedMessage.body.startsWith("/")) {
-            await this.commandHandler.handleCommand(sanitizedMessage);
-          } else {
-            await this.messageHandler.handleMessage(
-              sanitizedMessage,
-              this.client
-            );
-          }
+          await this.messageHandler.handleMessage(sanitizedMessage);
         }
 
         // performance logging
@@ -254,8 +157,8 @@ class AttendanceBot {
         const messageType = message.hasMedia
           ? "media"
           : message.body?.startsWith("/")
-          ? "commands"
-          : "messages";
+          ? "command"
+          : "message";
         const messageLength =
           (message.hasMedia
             ? message.body?.length

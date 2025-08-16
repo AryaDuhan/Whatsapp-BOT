@@ -23,11 +23,13 @@ const MESSAGE_TEMPLATES = {
 
 📚 *Subject Management:*
 • */add <subject> on <day> at <time> for <hours>*
+• */edit <subject>* - Edit a subject's details
 • */remove <subject>* - Remove a subject
 • */list* - Show all your subjects
 
 📊 *Attendance:*
-• */show attendance* - View all attendance
+• */show attendance* - View all attendance (includes mass bunks)
+• */show attendancewithbunks* - View all attendance (excludes mass bunks)
 • */show <subject>* - View specific subject attendance
 
 ⚙️ *Settings:*
@@ -82,6 +84,7 @@ const ATTENDANCE_RESPONSES = {
     "छूटा",
     "नहीं गया",
   ],
+  MASS_BUNK: ["mass bunk", "massbunk", "bunked"],
 };
 
 // Day name mappings

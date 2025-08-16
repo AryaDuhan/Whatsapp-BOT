@@ -22,7 +22,7 @@ const attendanceRecordSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ["present", "absent", "pending"],
+      enum: ["present", "absent", "pending", "massBunked"],
       default: "pending",
     },
     responseTime: {
@@ -67,6 +67,14 @@ attendanceRecordSchema.methods.markAbsent = function (autoMarked = false) {
   if (autoMarked) {
     this.responseTime = new Date();
   }
+  return this.save();
+};
+
+attendanceRecordSchema.methods.markMassBunk = function (
+  responseTime = new Date()
+) {
+  this.status = "massBunked";
+  this.responseTime = responseTime;
   return this.save();
 };
 
@@ -142,6 +150,11 @@ attendanceRecordSchema.statics.getUserAttendanceStats = function (
         pending: {
           $sum: {
             $cond: [{ $eq: ["$status", "pending"] }, 1, 0],
+          },
+        },
+        massBunked: {
+          $sum: {
+            $cond: [{ $eq: ["$status", "massBunked"] }, 1, 0],
           },
         },
       },

@@ -7,19 +7,14 @@ const TimetableParserService = require("../services/timetableParserService");
 const { getLogger } = require("../utils/logger");
 
 class MessageHandler {
-  constructor(client) {
-    // store the client
+  constructor(client, commandHandler) {
+    // Accept commandHandler here
     this.client = client;
-
-    // store pending attendance confirmations
+    this.commandHandler = commandHandler; // Store commandHandler
     this.pendingAttendanceResponses = new Map();
-
-    // store pending timetable confirmations
     this.pendingTimetableConfirmations = new Map();
     this.timetableParser = new TimetableParserService();
     this.pendingRemoveConfirmations = new Map();
-
-    // init logger
     this.logger = getLogger();
   }
 
@@ -27,10 +22,14 @@ class MessageHandler {
     const userId = message.from.replace("@c.us", "");
     const messageBody = message.body?.trim().toLowerCase() || "";
 
-    // get user
     let user = await User.findByWhatsAppId(userId);
 
-    // if the user does not exist in the database at all, they haven't used /start yet.
+    // **FIX:** Check for an active editing session first
+    if (this.commandHandler.editingSessions.has(userId)) {
+      await this.commandHandler.handleEditConversation(message, user);
+      return;
+    }
+
     if (!user) {
       await this.client.sendMessage(
         message.from,
@@ -40,19 +39,16 @@ class MessageHandler {
       return;
     }
 
-    // If the user exists but is not fully registered, they are in the registration process.
     if (!user.isFullyRegistered()) {
       await this.handleRegistrationFlow(message, user, messageBody);
       return;
     }
 
-    // handle image messages (timetable parsing)
     if (message.hasMedia && message.type === "image") {
       await this.handleTimetableImage(message, this.client, user);
       return;
     }
 
-    // check for pending subject removal confirmation
     if (
       this.pendingRemoveConfirmations.has(userId) &&
       (ATTENDANCE_RESPONSES.POSITIVE.includes(messageBody) ||
@@ -62,13 +58,11 @@ class MessageHandler {
       return;
     }
 
-    // handle attendance response
     if (this.isAttendanceResponse(messageBody)) {
       await this.handleAttendanceResponse(message, user, messageBody);
       return;
     }
 
-    // handle timetable confir response
     if (this.isTimetableConfirmationResponse(messageBody)) {
       await this.handleTimetableConfirmationResponse(
         message,
@@ -79,7 +73,6 @@ class MessageHandler {
       return;
     }
 
-    // handle general conversation for registered users
     await this.handleGeneralMessage(message, this.client, user, messageBody);
   }
 
@@ -192,11 +185,11 @@ class MessageHandler {
 
       // get the most recent pending record
       const record = pendingRecords[0];
-      const isPresent = this.parseAttendanceResponse(messageBody);
+      const attendanceStatus = this.parseAttendanceResponse(messageBody);
 
-      if (isPresent) {
+      if (attendanceStatus === "present") {
         await record.markPresent();
-        await record.subjectId.markAttendance(true);
+        await record.subjectId.markAttendance(true, false);
 
         await this.client.sendMessage(
           message.from,
@@ -206,9 +199,9 @@ class MessageHandler {
             `Current attendance: ${record.subjectId.attendancePercentage}% ` +
             `(${record.subjectId.attendedClasses}/${record.subjectId.totalClasses})`
         );
-      } else {
+      } else if (attendanceStatus === "absent") {
         await record.markAbsent(false);
-        await record.subjectId.markAttendance(false);
+        await record.subjectId.markAttendance(false, false);
 
         let response =
           `❌ *Attendance Marked: Absent*\n\n` +
@@ -224,6 +217,18 @@ class MessageHandler {
         }
 
         await this.client.sendMessage(message.from, response);
+      } else if (attendanceStatus === "massBunked") {
+        await record.markMassBunk();
+        await record.subjectId.markAttendance(false, true);
+
+        await this.client.sendMessage(
+          message.from,
+          `🤪 *Attendance Marked: Mass Bunk*\n\n` +
+            `📚 Subject: ${record.subjectId.subjectName}\n` +
+            `📅 Date: ${record.date.toDateString()}\n\n` +
+            `Current attendance: ${record.subjectId.attendancePercentage}% ` +
+            `(${record.subjectId.attendedClasses}/${record.subjectId.totalClasses})`
+        );
       }
     } catch (error) {
       console.error("Error handling attendance response:", error);
@@ -326,6 +331,7 @@ class MessageHandler {
     const allResponses = [
       ...ATTENDANCE_RESPONSES.POSITIVE,
       ...ATTENDANCE_RESPONSES.NEGATIVE,
+      ...ATTENDANCE_RESPONSES.MASS_BUNK,
     ];
 
     // check for an exact match
@@ -333,9 +339,27 @@ class MessageHandler {
   }
 
   parseAttendanceResponse(messageBody) {
-    return ATTENDANCE_RESPONSES.POSITIVE.some(
-      (response) => messageBody === response || messageBody.includes(response)
-    );
+    if (
+      ATTENDANCE_RESPONSES.POSITIVE.some(
+        (response) => messageBody === response || messageBody.includes(response)
+      )
+    ) {
+      return "present";
+    }
+    if (
+      ATTENDANCE_RESPONSES.NEGATIVE.some(
+        (response) => messageBody === response || messageBody.includes(response)
+      )
+    ) {
+      return "absent";
+    }
+    if (
+      ATTENDANCE_RESPONSES.MASS_BUNK.some(
+        (response) => messageBody === response || messageBody.includes(response)
+      )
+    ) {
+      return "massBunked";
+    }
   }
 
   /**

@@ -149,7 +149,7 @@ class SchedulerService {
         const reminderTime = nextClassTime.clone().subtract(10, "minutes");
 
         // check if should send a reminder now (within 1 min window)
-        if (Math.abs(now.diff(reminderTime, "minutes")) <= 1) {
+        if (Math.abs(now.diff(reminderTime, "minutes")) < 1) {
           await this.sendClassReminder(user, subject, nextClassTime);
         }
       }
@@ -170,10 +170,23 @@ class SchedulerService {
 
         const user = subject.userId;
         const nextClassTime = subject.getNextClassTime(user.timezone);
-        const confirmationTime = nextClassTime.clone().add(10, "minutes");
+
+        // **FIX:** Calculate the class end time first
+        const classEndTime = nextClassTime
+          .clone()
+          .add(subject.schedule.duration, "hours");
+
+        // **FIX:** Get the delay from environment variables, defaulting to 10 minutes
+        const confirmationDelay =
+          parseInt(process.env.CONFIRMATION_MINUTES_AFTER) || 10;
+
+        // **FIX:** Calculate the exact time to send the confirmation message
+        const confirmationTime = classEndTime
+          .clone()
+          .add(confirmationDelay, "minutes");
 
         // check if should send confirmation now (within 1 minute window)
-        if (Math.abs(now.diff(confirmationTime, "minutes")) <= 1) {
+        if (Math.abs(now.diff(confirmationTime, "minutes")) < 1) {
           await this.sendAttendanceConfirmation(user, subject, nextClassTime);
         }
       }
@@ -310,7 +323,8 @@ class SchedulerService {
         `Did you attend this class?\n\n` +
         `Reply with:\n` +
         `• *Yes* - if you attended\n` +
-        `• *No* - if you missed it\n\n` +
+        `• *No* - if you missed it\n` +
+        `• *Mass Bunk* - if it was a mass bunk\n\n` +
         `⏳ You have 2 hours to respond, or you'll be marked absent.`;
 
       await this.sendMessage(user._id, message);
@@ -341,11 +355,19 @@ class SchedulerService {
           75
         );
 
+        const classesNeededWithBunks = this.calculateClassesNeeded(
+          subject.attendedClasses,
+          subject.totalClasses - subject.massBunkedClasses,
+          75
+        );
+
         message +=
           `📚 *${subject.subjectName}*\n` +
           `   Current: ${subject.attendancePercentage}% ` +
           `(${subject.attendedClasses}/${subject.totalClasses})\n` +
-          `   Need ${classesNeeded} more classes for 75%\n\n`;
+          `   (Excluding Bunks: ${subject.attendancePercentageWithBunks}%)\n` +
+          `   Need ${classesNeeded} more classes for 75%\n` +
+          `   (or ${classesNeededWithBunks} if not counting bunks)\n\n`;
       }
 
       message += `💡 *Tip:* Attend your upcoming classes to improve your attendance!`;
@@ -372,6 +394,7 @@ class SchedulerService {
   }
 
   calculateClassesNeeded(attended, total, targetPercentage) {
+    if (total <= 0) return 0;
     const numerator = targetPercentage * total - 100 * attended;
     const denominator = 100 - targetPercentage;
     return Math.max(0, Math.ceil(numerator / denominator));
