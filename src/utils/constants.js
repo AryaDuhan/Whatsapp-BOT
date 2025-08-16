@@ -1,20 +1,15 @@
-// Application constants
-
-// Attendance thresholds
 const ATTENDANCE_THRESHOLDS = {
   LOW: 75,
   CRITICAL: 60,
   EXCELLENT: 90,
 };
 
-// Time constants (in minutes)
 const TIME_CONSTANTS = {
   REMINDER_BEFORE_CLASS: 10,
   CONFIRMATION_AFTER_CLASS: 10,
   ABSENCE_TIMEOUT_HOURS: 2,
 };
 
-// Message templates
 const MESSAGE_TEMPLATES = {
   WELCOME:
     "🎓 *Welcome to AttendanceBot!*\n\nI'll help you track your class attendance.",
@@ -46,7 +41,6 @@ const MESSAGE_TEMPLATES = {
     "⚠️ *Low Attendance Warning!*\n\nYour attendance is below 75%.",
 };
 
-// Response patterns for attendance confirmation
 const ATTENDANCE_RESPONSES = {
   POSITIVE: [
     "yes",
@@ -85,9 +79,9 @@ const ATTENDANCE_RESPONSES = {
     "नहीं गया",
   ],
   MASS_BUNK: ["mass bunk", "massbunk", "bunked"],
+  HOLIDAY: ["holiday"],
 };
 
-// Day name mappings
 const DAY_MAPPINGS = {
   mon: "Monday",
   monday: "Monday",
@@ -107,7 +101,6 @@ const DAY_MAPPINGS = {
   sunday: "Sunday",
 };
 
-// Common timezone mappings
 const TIMEZONE_MAPPINGS = {
   india: "Asia/Kolkata",
   indian: "Asia/Kolkata",
@@ -123,15 +116,13 @@ const TIMEZONE_MAPPINGS = {
   gmt: "Europe/London",
 };
 
-// Emoji mappings for attendance status
 const ATTENDANCE_EMOJIS = {
-  EXCELLENT: "🌟", // 90%+
-  GOOD: "✅", // 75-89%
-  WARNING: "⚠️", // 60-74%
-  CRITICAL: "❌", // <60%
+  EXCELLENT: "🌟",
+  GOOD: "✅",
+  WARNING: "⚠️",
+  CRITICAL: "❌",
 };
 
-// Validation constants
 const VALIDATION = {
   NAME_MIN_LENGTH: 2,
   NAME_MAX_LENGTH: 50,

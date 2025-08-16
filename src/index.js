@@ -16,11 +16,9 @@ const { getLogger } = require("./utils/logger");
 
 class AttendanceBot {
   constructor() {
-    // logger 1st
     this.logger = getLogger();
     this.logger.info("🚀 Initializing WhatsApp Attendance Bot");
 
-    // security middleware
     this.rateLimiter = new RateLimiter({
       commandsPerMinute: 10,
       messagesPerMinute: 20,
@@ -32,7 +30,6 @@ class AttendanceBot {
     this.securityManager = new SecurityManager();
     this.errorHandler = new ErrorHandler();
 
-    // client with security config
     this.client = new Client({
       authStrategy: new LocalAuth({
         clientId: "attendance-bot",
@@ -52,7 +49,6 @@ class AttendanceBot {
       },
     });
 
-    // instantiate CommandHandler first, then MessageHandler
     this.schedulerService = new SchedulerService();
     this.commandHandler = new CommandHandler(
       this.client,
@@ -63,7 +59,6 @@ class AttendanceBot {
 
     this.databaseService = new DatabaseService();
 
-    //globally accessible
     global.attendanceBot = this;
 
     this.startSecurityMonitoring();
@@ -72,35 +67,27 @@ class AttendanceBot {
   }
 
   initializeBot() {
-    // QR code
     this.client.on("qr", (qr) => {
       console.log("Scan the QR code below to authenticate.");
       qrcode.generate(qr, { small: true });
     });
 
-    // bot ready
     this.client.on("ready", async () => {
       console.log("WhatsApp attendance bot is ready!");
       console.log(`Bot Number: ${this.client.info.wid.user}`);
 
-      // database connection
       await this.databaseService.connect();
-
-      // scheduler service with whatsApp client
       await this.schedulerService.initialize();
       this.schedulerService.setWhatsAppClient(this.client);
 
       console.log("Bot is now fully operational!");
     });
 
-    // handle incoming messages
     this.client.on("message", async (message) => {
       const startTime = Date.now();
       let userId = null;
-      let sanitizedMessage;
 
       try {
-        // ignore group msgs
         if (message.from.includes("@g.us")) {
           this.logger.debug("Ignored group message", { from: message.from });
           return;
@@ -108,7 +95,6 @@ class AttendanceBot {
 
         userId = message.from.replace("@c.us", "");
 
-        // message structure validation
         const messageValidation =
           this.inputValidator.validateWhatsAppMessage(message);
         if (!messageValidation.isValid) {
@@ -119,7 +105,9 @@ class AttendanceBot {
           return;
         }
 
-        // check if user is blocked
+        // Attach sanitized body to the original message object
+        message.sanitizedBody = messageValidation.sanitized.body;
+
         const blockStatus = this.securityManager.isUserBlocked(userId);
         if (blockStatus.isBlocked) {
           this.logger.security("BLOCKED_USER_ATTEMPT", {
@@ -129,7 +117,6 @@ class AttendanceBot {
           });
 
           if (blockStatus.remainingTime > 60000) {
-            // only notify if > 1 minute remaining
             await this.client.sendMessage(
               message.from,
               `🚫 Your account is temporarily blocked.\n` +
@@ -142,27 +129,19 @@ class AttendanceBot {
           return;
         }
 
-        // sanitized input
-        sanitizedMessage = messageValidation.sanitized;
-
-        // route message to the correct handler
-        if (sanitizedMessage.body.startsWith("/")) {
-          await this.commandHandler.handleCommand(sanitizedMessage);
+        if (message.sanitizedBody.startsWith("/")) {
+          await this.commandHandler.handleCommand(message);
         } else {
-          await this.messageHandler.handleMessage(sanitizedMessage);
+          await this.messageHandler.handleMessage(message);
         }
 
-        // performance logging
         const duration = Date.now() - startTime;
         const messageType = message.hasMedia
           ? "media"
           : message.body?.startsWith("/")
           ? "command"
           : "message";
-        const messageLength =
-          (message.hasMedia
-            ? message.body?.length
-            : sanitizedMessage?.body?.length) || 0;
+        const messageLength = message.sanitizedBody?.length || 0;
 
         this.logger.performance("MESSAGE_PROCESSING", duration, {
           userId,
@@ -172,7 +151,6 @@ class AttendanceBot {
       } catch (error) {
         const duration = Date.now() - startTime;
 
-        // handle error
         const errorResult = await this.errorHandler.handleError(error, {
           operation: "MESSAGE_PROCESSING",
           userId,
@@ -187,7 +165,6 @@ class AttendanceBot {
           recovery: errorResult.recovery,
         });
 
-        // send error message
         if (message && message.from) {
           try {
             const userMessage = errorResult.recovery?.success
@@ -206,7 +183,6 @@ class AttendanceBot {
       }
     });
 
-    // authentication events
     this.client.on("authenticated", () => {
       console.log("Authentication successful.");
     });
@@ -219,13 +195,10 @@ class AttendanceBot {
       console.log("WhatsApp client disconnected.", reason);
     });
 
-    // init client
     this.client.initialize();
   }
 
-  // health check
   startSecurityMonitoring() {
-    // security metrics collection every 5 min
     setInterval(async () => {
       try {
         const securityReport = this.securityManager.generateSecurityReport();
@@ -239,7 +212,6 @@ class AttendanceBot {
           errors: errorStats,
         });
 
-        // alert on high threat
         if (securityReport?.securityMetrics?.threatLevel >= 3) {
           this.logger.critical("High threat level detected", {
             threatLevel: securityReport.securityMetrics.threatLevel,
@@ -251,7 +223,6 @@ class AttendanceBot {
       }
     }, 5 * 60 * 1000);
 
-    // health check every 10 minutes
     setInterval(async () => {
       try {
         const health = await this.performHealthCheck();
@@ -264,9 +235,18 @@ class AttendanceBot {
         this.logger.error("Health check error", error);
       }
     }, 10 * 60 * 1000);
+
+    setInterval(() => {
+      try {
+        if (this.messageHandler) {
+          this.messageHandler.cleanupExpiredConfirmations();
+        }
+      } catch (error) {
+        this.logger.error("Error cleaning up expired states", error);
+      }
+    }, 2 * 60 * 1000);
   }
 
-  // better health check
   async performHealthCheck() {
     try {
       const health = {
@@ -285,6 +265,11 @@ class AttendanceBot {
         rateLimit: this.rateLimiter.getStats(),
         memory: process.memoryUsage(),
         uptime: process.uptime(),
+        messageHandler: {
+          activeStates: this.messageHandler
+            ? this.messageHandler.userStates.size
+            : 0,
+        },
       };
 
       health.overall =
@@ -295,12 +280,15 @@ class AttendanceBot {
       return health;
     } catch (error) {
       this.logger.error("Health check failed", error);
-      return { overall: false, error: error.message };
+      return {
+        overall: false,
+        error: error.message,
+      };
     }
   }
 
   async stop() {
-    console.log(" Stopping bot...");
+    console.log("🛑 Stopping bot...");
     this.schedulerService.stop();
     await this.client.destroy();
     await this.databaseService.disconnect();
@@ -308,21 +296,19 @@ class AttendanceBot {
   }
 }
 
-// handle shutdown
 process.on("SIGINT", async () => {
-  console.log("\n Received SIGINT. Shutting down gracefully...");
+  console.log("\n🛑 Received SIGINT. Shutting down gracefully...");
   if (global.attendanceBot) {
     await global.attendanceBot.stop();
   }
 });
 
 process.on("SIGTERM", async () => {
-  console.log("\n Received SIGTERM. Shutting down gracefully...");
+  console.log("\n🛑 Received SIGTERM. Shutting down gracefully...");
   if (global.attendanceBot) {
     await global.attendanceBot.stop();
   }
 });
 
-// start
 console.log("Starting WhatsApp Attendance Bot...");
 global.attendanceBot = new AttendanceBot();

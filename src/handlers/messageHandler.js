@@ -8,23 +8,58 @@ const { getLogger } = require("../utils/logger");
 
 class MessageHandler {
   constructor(client, commandHandler) {
-    // Accept commandHandler here
     this.client = client;
-    this.commandHandler = commandHandler; // Store commandHandler
+    this.commandHandler = commandHandler;
+    this.userStates = new Map();
     this.pendingAttendanceResponses = new Map();
     this.pendingTimetableConfirmations = new Map();
     this.timetableParser = new TimetableParserService();
     this.pendingRemoveConfirmations = new Map();
+    this.pendingClearListConfirmations = new Map();
     this.logger = getLogger();
+  }
+
+  setUserState(userId, state, data = {}) {
+    this.userStates.set(userId, { type: state, data });
+  }
+
+  clearUserState(userId) {
+    this.userStates.delete(userId);
   }
 
   async handleMessage(message) {
     const userId = message.from.replace("@c.us", "");
-    const messageBody = message.body?.trim().toLowerCase() || "";
+    const messageBody = message.sanitizedBody?.trim().toLowerCase() || "";
+    const user = await User.findByWhatsAppId(userId);
 
-    let user = await User.findByWhatsAppId(userId);
+    const currentState = this.userStates.get(userId);
+    if (currentState?.type === "awaiting_timetable_image") {
+      if (messageBody === "cancel") {
+        this.clearUserState(userId);
+        this.commandHandler.activeCommand.delete(userId);
+        await this.client.sendMessage(
+          message.from,
+          "Image submission cancelled."
+        );
+        return;
+      }
+      if (message.hasMedia && message.type === "image") {
+        await this.handleTimetableImage(message, this.client, user);
+        return;
+      }
+    }
 
-    // **FIX:** Check for an active editing session first
+    if (
+      this.pendingTimetableConfirmations.has(userId) &&
+      !this.isTimetableConfirmationResponse(messageBody)
+    ) {
+      await this.client.sendMessage(
+        message.from,
+        "Please confirm or cancel the pending timetable before sending another command or image."
+      );
+      return;
+    }
+
     if (this.commandHandler.editingSessions.has(userId)) {
       await this.commandHandler.handleEditConversation(message, user);
       return;
@@ -44,17 +79,17 @@ class MessageHandler {
       return;
     }
 
-    if (message.hasMedia && message.type === "image") {
-      await this.handleTimetableImage(message, this.client, user);
-      return;
-    }
-
     if (
       this.pendingRemoveConfirmations.has(userId) &&
       (ATTENDANCE_RESPONSES.POSITIVE.includes(messageBody) ||
         ATTENDANCE_RESPONSES.NEGATIVE.includes(messageBody))
     ) {
       await this.handleRemoveConfirmationResponse(message, user, messageBody);
+      return;
+    }
+
+    if (this.pendingClearListConfirmations.has(userId)) {
+      await this.handleClearListConfirmation(message, user, messageBody);
       return;
     }
 
@@ -77,7 +112,6 @@ class MessageHandler {
   }
 
   async handleRegistrationFlow(message, user, messageBody) {
-    //handles users who have started the process
     switch (user.registrationStep) {
       case "name":
         if (messageBody.length < 2 || messageBody.length > 50) {
@@ -108,7 +142,6 @@ class MessageHandler {
       case "timezone":
         let timezone = messageBody.trim();
 
-        // handle common shortcuts
         if (timezone === "india" || timezone === "indian") {
           timezone = "Asia/Kolkata";
         } else if (timezone === "usa" || timezone === "america") {
@@ -118,7 +151,6 @@ class MessageHandler {
         }
 
         try {
-          // validate timezone using moment
           const moment = require("moment-timezone");
           if (!moment.tz.zone(timezone)) {
             throw new Error("Invalid timezone");
@@ -163,33 +195,29 @@ class MessageHandler {
     }
   }
 
-  async handleAttendanceResponse(message, client, user, messageBody) {
+  async handleAttendanceResponse(message, user, messageBody) {
     try {
-      // find pending attendance records for this user
-      const pendingRecords = await AttendanceRecord.find({
+      const record = await AttendanceRecord.findOne({
         userId: user._id,
         status: "pending",
+        subjectId: { $ne: null },
       })
         .populate("subjectId")
-        .sort({ scheduledTime: -1 })
-        .limit(5);
+        .sort({ scheduledTime: -1 });
 
-      if (pendingRecords.length === 0) {
+      if (!record || !record.subjectId) {
         await this.client.sendMessage(
           message.from,
-          "🤔 I don't have any pending attendance confirmations for you.\n\n" +
-            "If you think this is a mistake, please contact support."
+          "🤔 I don't have any pending attendance confirmations for you."
         );
         return;
       }
 
-      // get the most recent pending record
-      const record = pendingRecords[0];
       const attendanceStatus = this.parseAttendanceResponse(messageBody);
 
       if (attendanceStatus === "present") {
         await record.markPresent();
-        await record.subjectId.markAttendance(true, false);
+        await record.subjectId.markAttendance(true, false, false);
 
         await this.client.sendMessage(
           message.from,
@@ -201,7 +229,7 @@ class MessageHandler {
         );
       } else if (attendanceStatus === "absent") {
         await record.markAbsent(false);
-        await record.subjectId.markAttendance(false, false);
+        await record.subjectId.markAttendance(false, false, false);
 
         let response =
           `❌ *Attendance Marked: Absent*\n\n` +
@@ -210,7 +238,6 @@ class MessageHandler {
           `Current attendance: ${record.subjectId.attendancePercentage}% ` +
           `(${record.subjectId.attendedClasses}/${record.subjectId.totalClasses})`;
 
-        // low attendance warning
         if (record.subjectId.attendancePercentage < 75) {
           response += `\n\n⚠️ *Low Attendance Warning!*\n`;
           response += `Your attendance is below 75%. Please attend more classes.`;
@@ -219,7 +246,7 @@ class MessageHandler {
         await this.client.sendMessage(message.from, response);
       } else if (attendanceStatus === "massBunked") {
         await record.markMassBunk();
-        await record.subjectId.markAttendance(false, true);
+        await record.subjectId.markAttendance(false, true, false);
 
         await this.client.sendMessage(
           message.from,
@@ -228,6 +255,17 @@ class MessageHandler {
             `📅 Date: ${record.date.toDateString()}\n\n` +
             `Current attendance: ${record.subjectId.attendancePercentage}% ` +
             `(${record.subjectId.attendedClasses}/${record.subjectId.totalClasses})`
+        );
+      } else if (attendanceStatus === "holiday") {
+        await record.markHoliday();
+        await record.subjectId.markAttendance(false, false, true);
+
+        await this.client.sendMessage(
+          message.from,
+          `🎉 *Marked as Holiday*\n\n` +
+            `📚 Subject: ${record.subjectId.subjectName}\n` +
+            `📅 Date: ${record.date.toDateString()}\n\n` +
+            `This class will not be counted in your attendance.`
         );
       }
     } catch (error) {
@@ -257,7 +295,6 @@ class MessageHandler {
       messageBody.toLowerCase().trim()
     );
 
-    // clear the pending confirmation immediately
     this.pendingRemoveConfirmations.delete(userId);
 
     if (isConfirmed) {
@@ -295,10 +332,53 @@ class MessageHandler {
         `👍 Removal of "*${pendingConfirmation.subjectName}*" has been cancelled.`
       );
     }
+    this.commandHandler.activeCommand.delete(userId);
+  }
+
+  async handleClearListConfirmation(message, user, messageBody) {
+    const userId = user._id;
+    const pendingConfirmation = this.pendingClearListConfirmations.get(userId);
+
+    const confirmationExpires = 2 * 60 * 1000; // 2 minutes
+    if (Date.now() - pendingConfirmation.timestamp > confirmationExpires) {
+      this.pendingClearListConfirmations.delete(userId);
+      await this.client.sendMessage(
+        message.from,
+        "⏰ Confirmation timed out. Please use the /clearlist command again."
+      );
+      return;
+    }
+
+    const isConfirmed = ATTENDANCE_RESPONSES.POSITIVE.includes(
+      messageBody.toLowerCase().trim()
+    );
+
+    this.pendingClearListConfirmations.delete(userId);
+
+    if (isConfirmed) {
+      try {
+        await Subject.deleteMany({ userId: userId });
+        await this.client.sendMessage(
+          message.from,
+          "✅ All subjects have been successfully removed."
+        );
+      } catch (error) {
+        this.logger.error("Error clearing subject list:", error, { userId });
+        await this.client.sendMessage(
+          message.from,
+          "❌ An error occurred while removing your subjects."
+        );
+      }
+    } else {
+      await this.client.sendMessage(
+        message.from,
+        "👍 Action cancelled. Your subjects have not been removed."
+      );
+    }
+    this.commandHandler.activeCommand.delete(userId);
   }
 
   async handleGeneralMessage(message, client, user, messageBody) {
-    // common responses
     const responses = {
       hi: "👋 Hello! Type */help* to see what I can do.",
       hello: "👋 Hi there! Type */help* to see available commands.",
@@ -311,7 +391,6 @@ class MessageHandler {
       what: "I'm an attendance tracking bot! Type */help* to learn more.",
     };
 
-    // partial matches
     for (const [key, response] of Object.entries(responses)) {
       if (messageBody.includes(key)) {
         await this.client.sendMessage(message.from, response);
@@ -319,7 +398,6 @@ class MessageHandler {
       }
     }
 
-    // response for unrecognized messages
     await this.client.sendMessage(
       message.from,
       "🤔 I didn't understand that.\n\n" +
@@ -332,9 +410,9 @@ class MessageHandler {
       ...ATTENDANCE_RESPONSES.POSITIVE,
       ...ATTENDANCE_RESPONSES.NEGATIVE,
       ...ATTENDANCE_RESPONSES.MASS_BUNK,
+      ...ATTENDANCE_RESPONSES.HOLIDAY,
     ];
 
-    // check for an exact match
     return allResponses.includes(messageBody);
   }
 
@@ -360,33 +438,32 @@ class MessageHandler {
     ) {
       return "massBunked";
     }
+    if (
+      ATTENDANCE_RESPONSES.HOLIDAY.some(
+        (response) => messageBody === response || messageBody.includes(response)
+      )
+    ) {
+      return "holiday";
+    }
   }
-
-  /**
-   * handle timetable image parsing
-   * @param {Object} message
-   * @param {Object} client
-   * @param {Object} user
-   */
 
   async handleTimetableImage(message, client, user) {
     const userId = message.from.replace("@c.us", "");
+    this.clearUserState(userId);
+    this.commandHandler.activeCommand.delete(userId);
 
     try {
-      // check if ai is available
       if (!this.timetableParser.isAvailable()) {
         await this.client.sendMessage(
           message.from,
           "🤖 *AI Timetable Parser*\n\n" +
             "Sorry, the AI timetable parser is not configured.\n\n" +
             "Please add your subjects manually using:\n" +
-            "*/add <subject> on <day> at <time> for <hours>*\n\n" +
-            "Example: /add Mathematics on Monday at 10:00 for 2"
+            "*/add <subject> on <day> at <time> for <hours>*"
         );
         return;
       }
 
-      // send processing message
       await this.client.sendMessage(
         message.from,
         "🔍 *Processing Timetable Image*\n\n" +
@@ -394,16 +471,13 @@ class MessageHandler {
           "This may take a few seconds."
       );
 
-      // download image
       const media = await message.downloadMedia();
       if (!media || !media.data) {
         throw new Error("Failed to download image");
       }
 
-      // convert base64 to buffer
       const imageBuffer = Buffer.from(media.data, "base64");
 
-      // parse the tt
       const parsedClasses = await this.timetableParser.parseTimetableImage(
         imageBuffer,
         userId
@@ -424,14 +498,14 @@ class MessageHandler {
         return;
       }
 
-      // filter out existing subjects
       const newClasses = [];
       const existingClasses = [];
 
       for (const classData of parsedClasses) {
-        const existingSubject = await Subject.findByUserAndName(
+        const existingSubject = await Subject.findByUserAndNameAndDay(
           user._id,
-          classData.subject
+          classData.subject,
+          classData.day
         );
         if (existingSubject) {
           existingClasses.push(classData);
@@ -440,13 +514,11 @@ class MessageHandler {
         }
       }
 
-      // store new classes for confirmation
       this.pendingTimetableConfirmations.set(userId, {
         classes: newClasses,
         timestamp: Date.now(),
       });
 
-      // send confirmation message
       let response = `📋 *Timetable Parsed Successfully!*\n\n`;
       response += `I found *${parsedClasses.length} classes* in your timetable.\n\n`;
 
@@ -497,11 +569,6 @@ class MessageHandler {
     }
   }
 
-  /**
-   * check if message is a timetable confirmation response
-   * @param {string} messageBody - Message body
-   * @returns {boolean} true if it's a confirmation response
-   */
   isTimetableConfirmationResponse(messageBody) {
     const confirmationKeywords = ["yes", "confirm", "no", "cancel", "skip"];
     return confirmationKeywords.some((keyword) =>
@@ -509,13 +576,6 @@ class MessageHandler {
     );
   }
 
-  /**
-   * handle timetable confirmation response
-   * @param {Object} message
-   * @param {Object} client
-   * @param {Object} user
-   * @param {string} messageBody
-   */
   async handleTimetableConfirmationResponse(
     message,
     client,
@@ -526,19 +586,12 @@ class MessageHandler {
     const pendingConfirmation = this.pendingTimetableConfirmations.get(userId);
 
     if (!pendingConfirmation) {
-      await this.client.sendMessage(
-        message.from,
-        "❌ *No pending timetable confirmation*\n\n" +
-          "Please send a timetable image to parse."
-      );
       return;
     }
 
-    // check if confirmation has expired (5 mins)
     const now = Date.now();
     const timeDiff = now - pendingConfirmation.timestamp;
     if (timeDiff > 5 * 60 * 1000) {
-      // 5 mins
       this.pendingTimetableConfirmations.delete(userId);
       await this.client.sendMessage(
         message.from,
@@ -570,7 +623,6 @@ class MessageHandler {
       return;
     }
 
-    // remove pending confirmation
     this.pendingTimetableConfirmations.delete(userId);
 
     if (action === "cancel") {
@@ -584,17 +636,16 @@ class MessageHandler {
       return;
     }
 
-    // add classes to database
     const classes = pendingConfirmation.classes;
     const addedClasses = [];
     const failedClasses = [];
 
     for (const classData of classes) {
       try {
-        // check if subject already exists
-        const existingSubject = await Subject.findByUserAndName(
+        const existingSubject = await Subject.findByUserAndNameAndDay(
           user._id,
-          classData.subject
+          classData.subject,
+          classData.day
         );
         if (existingSubject) {
           failedClasses.push({
@@ -604,7 +655,6 @@ class MessageHandler {
           continue;
         }
 
-        // create new subject
         const subject = new Subject({
           userId: user._id,
           subjectName: classData.subject,
@@ -629,7 +679,6 @@ class MessageHandler {
       }
     }
 
-    // send results to user
     let responseMessage = `🎉 *Timetable Classes Added!*\n\n`;
 
     if (addedClasses.length > 0) {
@@ -658,7 +707,6 @@ class MessageHandler {
     await this.client.sendMessage(message.from, responseMessage);
   }
 
-  //cleanup
   cleanupExpiredConfirmations() {
     const now = Date.now();
     const expiredUsers = [];
@@ -669,7 +717,6 @@ class MessageHandler {
     ] of this.pendingTimetableConfirmations.entries()) {
       const timeDiff = now - confirmation.timestamp;
       if (timeDiff > 5 * 60 * 1000) {
-        // 5 mins
         expiredUsers.push(userId);
       }
     }

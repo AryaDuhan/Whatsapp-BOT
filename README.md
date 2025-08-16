@@ -4,40 +4,34 @@ A secure, intelligent, and reliable WhatsApp bot designed to help students effor
 
 ## ✨ Core Features
 
-- **🤖 Automated Attendance Tracking**: The bot automatically sends a confirmation message after your class ends. Simply reply "yes", "no", or "mass bunk" to log your attendance.
+- **🤖 Automated Attendance Tracking**: The bot automatically sends a confirmation message after your class ends. Simply reply "yes", "no", "mass bunk", or "holiday" to log your attendance.
 - **🔔 Smart Reminders**: Never miss a class again. Get a WhatsApp reminder 10 minutes before each scheduled class.
-- **📸 AI Timetable Parser**: Simply send a screenshot of your timetable, and the bot will use AI to read it, extract all your classes, and add them to your schedule automatically.
+- **📸 AI Timetable Parser**: Use the `/image` command to send a screenshot of your timetable, and the bot will use AI to read it and add your classes automatically.
 - **📊 Detailed Reports**: Get an instant overview of your attendance for all subjects or dive deep into the statistics for a specific class.
 - **⚠️ Low Attendance Alerts**: The bot proactively warns you if your attendance for any subject drops below 75%.
 - **💬 Natural Language Commands**: Add your schedule using simple, human-readable commands (e.g., `/add Math on Monday at 10:00 for 2`).
-- **✏️ Interactive Editing**: Easily edit any detail of an existing class with the conversational `/edit` command.
+- **✏️ Interactive Editing**: Easily edit any detail of an existing class—including total classes, attended, and mass bunked—with the conversational `/edit` command.
 - **🌍 Full Timezone Support**: Configure your local timezone to ensure reminders are always accurate, no matter where you are.
-- **✅ Confirmation for Subject Removal**: To prevent accidental deletions, the bot asks for a "yes" or "no" confirmation before removing a subject from your schedule.
 
-## 🛡️ Enterprise-Grade Security
+## ⭐ New Features & Recent Changes
 
-This bot was built with a security-first approach, implementing multiple layers of protection to ensure your data is safe and the service is reliable.
+A lot has been added to make the bot more powerful and user-friendly!
 
-- **Input Validation & Sanitization**: Protects against all common injection attacks (XSS, NoSQL, Command Injection) by validating and sanitizing all user input.
-- **Rate Limiting & Abuse Prevention**: A sliding-window rate limiter prevents spam and brute-force attacks by limiting the number of messages and commands a user can send.
-- **User Blocking System**: Automatically blocks users who exhibit malicious behavior, with an escalating block duration for repeat offenders.
-- **End-to-End Encryption**: Utilizes AES-256-GCM encryption for sensitive data stored in the database.
-- **Secure Session Management**: Ensures that user sessions are secure and protected against hijacking.
-- **Comprehensive Error Handling**: A robust error handler with a circuit-breaker pattern prevents crashes and ensures the bot remains stable.
-- **Performance Monitoring**: Actively monitors system resources to prevent resource exhaustion and ensure smooth operation.
-- **Detailed Audit Logging**: Securely logs all critical security events for monitoring and threat analysis.
+- **📈 Attendance Summary Command (`/summary`)**: Get a quick, scannable summary of your attendance for all subjects, including how many classes you can miss or need to attend to maintain a 75% average.
+- **➗ Breakeven Calculator (`/breakeven`)**: Calculate exactly how many classes you can afford to miss or need to attend for a specific subject to reach a target percentage.
+- **📅 Daily Schedule Commands (`/monday`, `/tuesday`, etc.)**: Quickly view your schedule for any day of the week.
+- **🖼️ Image Command (`/image`)**: A dedicated command to initiate the AI timetable parsing flow, which now includes a disclaimer about potential inaccuracies.
+- **🎉 Holiday Attendance Status**: You can now reply with "holiday" to an attendance confirmation. This will mark the class as a holiday and exclude it from your attendance percentage calculation.
+- **Enhanced State Management**: The bot now prevents you from running a new command while another one (like `/edit` or `/image`) is still active, reducing confusion.
+- **Refined Message Formatting**: All bot messages have been overhauled to be cleaner, more professional, and easier to read.
 
-## 🐞 Bug Fixes
+## 🐞 Bug Fixes & Improvements
 
-A log of issues that have been resolved to improve bot stability and user experience.
-
-- **Conversational Command Failures**: Fixed a critical bug where the bot would not recognize replies during an `/edit` session.
-- **Image Parsing Crash:** Fixed a critical bug that caused the bot to crash when it received an image because the `downloadMedia` function was not accessible.
-- **Media Message Crash:** Fixed a crash that occurred when a user sent a media file (like an image).
-- **Command Crash:** Resolved an error that caused the bot to crash whenever any command was used.
-- **Non-Command Message Crash:** Corrected a bug that made the bot crash when receiving any regular text message.
-- **Incorrect Name Registration:** Stopped the bot from incorrectly saving a new user's first message as their name.
-- **Faulty Attendance Keyword Matching:** Prevented the bot from misinterpreting casual words (like "yo") as an attendance confirmation.
+- **Smarter AI Timetable Parser**: The AI prompt has been significantly improved to better handle complex timetables with merged cells, extraneous text, and varied time formats.
+- **Image Parsing Crash Fix**: Resolved a critical bug that caused the bot to crash when receiving an image because the `downloadMedia` function was not accessible.
+- **State Management Fixes**: Corrected issues where the bot would lose track of a user's state during multi-step commands.
+- **Timezone Recognition**: The bot now correctly interprets common shortcuts like "india" during the registration process.
+- **Duplicate Subject Prevention**: The AI parser is now smarter and prevents the creation of duplicate subjects for classes that occur on different days.
 
 ## 🚀 Getting Started
 
@@ -66,7 +60,6 @@ A log of issues that have been resolved to improve bot stability and user experi
     - Create a `.env` file by copying the example: `cp env.example .env`
     - Open the `.env` file and fill in the required values:
       - `MONGODB_URI`: Your MongoDB connection string.
-      - `ENCRYPTION_KEY`: A random, 32-character secret key for data encryption.
       - `GEMINI_API_KEY` (Optional): Your Google Gemini API key to enable the AI Timetable Parser.
 
 4.  **Run the Bot**
@@ -84,23 +77,23 @@ A log of issues that have been resolved to improve bot stability and user experi
 
 Here are the main commands to interact with the bot:
 
-| Command                     | Description                                        | Example                                  |
-| --------------------------- | -------------------------------------------------- | ---------------------------------------- |
-| `/start`                    | Begins the one-time registration process.          | `/start`                                 |
-| `/add`                      | Adds a new subject to your schedule.               | `/add Physics on Tuesday at 3pm for 1.5` |
-| `/edit`                     | Interactively edit a subject's details.            | `/edit Physics`                          |
-| `/remove`                   | Removes a subject from your schedule.              | `/remove Physics`                        |
-| `/list`                     | Shows all the subjects you are currently tracking. | `/list`                                  |
-| `/show`                     | Displays your attendance report.                   | `/show attendance` or `/show Physics`    |
-| `/show attendancewithbunks` | Shows attendance excluding mass bunks.             | `/show attendancewithbunks`              |
-| `/timezone`                 | Sets your local timezone for accurate reminders.   | `/timezone America/New_York`             |
-| `/help`                     | Shows the help message with all commands.          | `/help`                                  |
-
-## ☁️ Deployment
-
-To run the bot 24/7, you can deploy it to a cloud service. This project includes a `Dockerfile` for easy deployment on platforms that support containers.
-
-- **Recommended Free Platforms:** [Railway](https://railway.app/).
+| Command         | Description                                        | Example                                  |
+| --------------- | -------------------------------------------------- | ---------------------------------------- |
+| `/start`        | Begins the one-time registration process.          | `/start`                                 |
+| `/help`         | Shows the help message with all commands.          | `/help`                                  |
+| `/add`          | Adds a new subject to your schedule.               | `/add Physics on Tuesday at 3pm for 1.5` |
+| `/edit`         | Interactively edit a subject's details.            | `/edit Physics`                          |
+| `/remove`       | Removes a subject from your schedule.              | `/remove Physics`                        |
+| `/clearlist`    | Removes all subjects from your schedule.           | `/clearlist`                             |
+| `/list`         | Shows all the subjects you are currently tracking. | `/list`                                  |
+| `/monday`, etc. | Shows your schedule for a specific day.            | `/monday`                                |
+| `/image`        | Starts the AI timetable parsing process.           | `/image`                                 |
+| `/show`         | Displays your attendance report.                   | `/show attendance` or `/show Physics`    |
+| `/summary`      | Gets a quick, scannable attendance summary.        | `/summary`                               |
+| `/breakeven`    | Calculates classes to miss/attend for a target %.  | `/breakeven Physics at 80%`              |
+| `/timezone`     | Sets your local timezone for accurate reminders.   | `/timezone America/New_York`             |
+| `/settings`     | View or change your bot preferences.               | `/settings`                              |
+| `/deleteuser`   | Permanently deletes your account and data.         | `/deleteuser`                            |
 
 ## 🤝 Contributing
 

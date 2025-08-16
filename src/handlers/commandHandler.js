@@ -2,7 +2,11 @@ const User = require("../models/User");
 const Subject = require("../models/Subject");
 const AttendanceRecord = require("../models/AttendanceRecord");
 const Helpers = require("../utils/helpers");
-const { MESSAGE_TEMPLATES, VALIDATION } = require("../utils/constants");
+const {
+  MESSAGE_TEMPLATES,
+  VALIDATION,
+  ATTENDANCE_THRESHOLDS,
+} = require("../utils/constants");
 const compromise = require("compromise");
 const moment = require("moment-timezone");
 
@@ -12,6 +16,7 @@ class CommandHandler {
     this.schedulerService = schedulerService;
     this.messageHandler = null; // This will be set by the main bot class
     this.editingSessions = new Map();
+    this.activeCommand = new Map();
 
     this.commands = {
       "/start": this.handleStart.bind(this),
@@ -19,12 +24,42 @@ class CommandHandler {
       "/add": this.handleAdd.bind(this),
       "/edit": this.handleEdit.bind(this),
       "/remove": this.handleRemove.bind(this),
+      "/clearlist": this.handleClearList.bind(this),
       "/show": this.handleShow.bind(this),
       "/list": this.handleList.bind(this),
+      "/image": this.handleImage.bind(this),
+      "/breakeven": this.handleBreakeven.bind(this),
+      "/summary": this.handleSummary.bind(this),
       "/timezone": this.handleTimezone.bind(this),
       "/settings": this.handleSettings.bind(this),
       "/deleteuser": this.handleDeleteUser.bind(this),
+      "/monday": (message, args, user) =>
+        this.handleDayCommand(message, user, "Monday"),
+      "/tuesday": (message, args, user) =>
+        this.handleDayCommand(message, user, "Tuesday"),
+      "/wednesday": (message, args, user) =>
+        this.handleDayCommand(message, user, "Wednesday"),
+      "/thursday": (message, args, user) =>
+        this.handleDayCommand(message, user, "Thursday"),
+      "/friday": (message, args, user) =>
+        this.handleDayCommand(message, user, "Friday"),
+      "/saturday": (message, args, user) =>
+        this.handleDayCommand(message, user, "Saturday"),
+      "/sunday": (message, args, user) =>
+        this.handleDayCommand(message, user, "Sunday"),
     };
+
+    // Add dev commands only in development mode
+    if (
+      process.env.NODE_ENV === "development" ||
+      process.env.DEV_MODE === "true"
+    ) {
+      this.commands["/testconfirm"] = this.handleTestConfirm.bind(this);
+      this.commands["/testremind"] = this.handleTestRemind.bind(this);
+      this.commands["/testalert"] = this.handleTestAlert.bind(this);
+      this.commands["/clearconfirm"] = this.handleClearConfirm.bind(this);
+      this.commands["/debugattendance"] = this.handleDebugAttendance.bind(this);
+    }
   }
 
   // Setter for messageHandler to resolve circular dependency
@@ -36,6 +71,17 @@ class CommandHandler {
     const userId = message.from.replace("@c.us", "");
     const messageBody = message.body.trim();
     const [command, ...args] = messageBody.split(" ");
+
+    if (
+      this.activeCommand.has(userId) &&
+      this.activeCommand.get(userId) !== command.toLowerCase()
+    ) {
+      await this.client.sendMessage(
+        message.from,
+        `⚠️ A command is already active. Please complete or cancel the current command before starting a new one.`
+      );
+      return;
+    }
 
     let user = await User.findByWhatsAppId(userId);
 
@@ -60,6 +106,12 @@ class CommandHandler {
 
     const handler = this.commands[command.toLowerCase()];
     if (handler) {
+      if (
+        command.toLowerCase() !== "/start" &&
+        command.toLowerCase() !== "/help"
+      ) {
+        this.activeCommand.set(userId, command.toLowerCase());
+      }
       await handler(message, args, user);
     } else {
       await this.handleUnknownCommand(message);
@@ -91,8 +143,8 @@ class CommandHandler {
     if (user && user.isFullyRegistered()) {
       await this.client.sendMessage(
         message.from,
-        `👋 Hello ${user.getDisplayName()}!\n\n` +
-          "You are already registered. Type */help* to see available commands."
+        `👋 Hello, ${user.getDisplayName()}!\n\n` +
+          "You are already registered. Type */help* to see what I can do."
       );
       return;
     }
@@ -104,63 +156,85 @@ class CommandHandler {
 
     await this.client.sendMessage(
       message.from,
-      "🎓 *Welcome to AttendanceBot!*\n\n" +
-        "I'll help you track your class attendance. Let's get you set up!\n\n" +
-        "First, what's your name?"
+      "🎓 *Welcome to your Attendance Bot!*\n\n" +
+        "I'm here to help you track your class attendance effortlessly.\n\n" +
+        "First, what should I call you?"
     );
   }
 
   async handleHelp(message, args, user) {
-    const helpText = `
+    let helpText = `
 🤖 *AttendanceBot Help*
 
-📚 *Subject Management:*
-• */add <subject> on <day> at <time> for <hours>*
-  Example: /add Mathematics on Monday at 10:00 for 2
-• */edit <subject>* - Edit a subject's details
-• */remove <subject>* - Remove a subject
-• */list* - Show all your subjects
+Here's what I can do:
 
-📸 *AI Timetable Parser:*
-• Send a screenshot of your timetable
-• I'll show you all classes found and ask for confirmation
-• Reply "confirm" to add all classes, "cancel" to cancel
-• Works with clear, readable timetable images
+📚 *Subject Management*
+• */add <subject> on <day> at <time> for <hours>* - Add a new class.
+• */edit <subject>* - Interactively edit a subject's details.
+• */remove <subject>* - Remove a subject.
+• */clearlist* - Remove all your subjects.
+• */list* - Show all your subjects.
 
-📊 *Attendance:*
-• */show attendance* - View all attendance (includes mass bunks)
-• */show attendancewithbunks* - View all attendance (excludes mass bunks)
-• */show <subject>* - View specific subject attendance
+🗓️ *Daily Schedule*
+• */monday*, */tuesday*, etc. - Show all classes for a specific day.
 
-⚙️ *Settings:*
-• */timezone <timezone>* - Set your timezone
-• */settings* - View/change preferences
-• */deleteuser* - Delete your account and all data
+📸 *AI Timetable Parser*
+• */image* - Start the AI timetable parsing process.
 
-💡 *Tips:*
-- I'll remind you 10 minutes before each class
-- Reply "yes" or "no" or "mass bunk" to attendance confirmations
-- If you don't reply within 2 hours, you'll be marked absent
-- I'll alert you if attendance drops below 75%
-- Send a timetable image for automatic setup!
-        `.trim();
+📊 *Attendance Tracking*
+• */show attendance* - View a summary of all subjects.
+• */show <subject>* - Get a detailed view of a specific subject.
+• */summary* - See a quick, scannable summary of your attendance.
+• */breakeven <subject> at <percentage>* - Calculate classes you can miss or need to attend.
+
+⚙️ *Settings*
+• */timezone <timezone>* - Set your local timezone.
+• */settings* - View or change your preferences.
+• */deleteuser* - Permanently delete your account and data.`;
+
+    if (
+      process.env.NODE_ENV === "development" ||
+      process.env.DEV_MODE === "true"
+    ) {
+      helpText += `
+
+🧪 *Developer Commands*
+• */testconfirm* - Test the attendance confirmation flow.
+• */testremind* - Test a class reminder.
+• */testalert* - Test a low attendance alert.`;
+    }
+
+    helpText = helpText.trim();
 
     await this.client.sendMessage(message.from, helpText);
   }
 
+  async handleImage(message, args, user) {
+    const userId = user._id;
+    this.messageHandler.setUserState(userId, "awaiting_timetable_image");
+    await this.client.sendMessage(
+      message.from,
+      "📸 Please send a clear image of your timetable.\n\n" +
+        "⚠️ *Disclaimer:* The AI parser may not be 100% accurate. Please review the parsed classes carefully before confirming.\n\n" +
+        "You can type *cancel* at any time to abort."
+    );
+  }
+
   async handleAdd(message, args, user) {
     const fullCommand = args.join(" ");
+    const userId = user._id;
 
     if (!fullCommand) {
       await this.client.sendMessage(
         message.from,
         "📝 *Add a Subject*\n\n" +
-          "Format: */add <subject> on <day> at <time> for <hours>*\n\n" +
-          "Examples:\n" +
-          "• /add Mathematics on Monday at 10:00 for 2\n" +
-          "• /add Physics on Wed at 2pm for 1.5\n" +
-          "• /add Computer Science on Friday at 09:30 for 3"
+          "To add a new class, please use this format:\n" +
+          "*/add <Subject Name> on <Day> at <Time> for <Duration in hours>*\n\n" +
+          "*Examples:*\n" +
+          "• `/add Mathematics on Monday at 10:00 for 2`\n" +
+          "• `/add Physics on Wed at 2pm for 1.5`"
       );
+      this.activeCommand.delete(userId);
       return;
     }
 
@@ -170,10 +244,11 @@ class CommandHandler {
       if (!parsed) {
         await this.client.sendMessage(
           message.from,
-          "❌ I couldn't understand that format.\n\n" +
-            "Please use: */add <subject> on <day> at <time> for <hours>*\n\n" +
-            "Example: /add Mathematics on Monday at 10:00 for 2"
+          "❌ *Invalid Format*\n\n" +
+            "I couldn't understand that. Please use the correct format:\n" +
+            "*/add <Subject> on <Day> at <Time> for <Duration>*"
         );
+        this.activeCommand.delete(userId);
         return;
       }
 
@@ -186,8 +261,9 @@ class CommandHandler {
       if (existingSubject) {
         await this.client.sendMessage(
           message.from,
-          `❌ You already have a subject called "${subjectName}".`
+          `❌ You already have a subject named *"${subjectName}"*.`
         );
+        this.activeCommand.delete(userId);
         return;
       }
 
@@ -202,11 +278,11 @@ class CommandHandler {
       await this.client.sendMessage(
         message.from,
         `✅ *Subject Added Successfully!*\n\n` +
-          `📚 Subject: ${subjectName}\n` +
-          `📅 Day: ${day}\n` +
-          `⏰ Time: ${time}\n` +
-          `⌛ Duration: ${duration} hour(s)\n\n` +
-          `I'll remind you 10 minutes before each class! 🔔`
+          `*Subject:* ${subjectName}\n` +
+          `*Day:* ${day}\n` +
+          `*Time:* ${time}\n` +
+          `*Duration:* ${duration} hour(s)\n\n` +
+          `🔔 I'll remind you 10 minutes before each class!`
       );
     } catch (error) {
       console.error("Error adding subject:", error);
@@ -214,19 +290,24 @@ class CommandHandler {
         message.from,
         "❌ Sorry, there was an error adding the subject. Please try again."
       );
+    } finally {
+      this.activeCommand.delete(userId);
     }
   }
 
   async handleEdit(message, args, user) {
     const subjectName = args.join(" ").trim();
+    const userId = user._id;
 
     if (!subjectName) {
       await this.client.sendMessage(
         message.from,
         "📝 *Edit a Subject*\n\n" +
-          "Format: */edit <subject name>*\n\n" +
-          "Example: /edit Mathematics"
+          "Please tell me which subject you'd like to edit.\n\n" +
+          "*Format:* `/edit <Subject Name>`\n" +
+          "*Example:* `/edit Mathematics`"
       );
+      this.activeCommand.delete(userId);
       return;
     }
 
@@ -236,24 +317,26 @@ class CommandHandler {
       if (!subject) {
         await this.client.sendMessage(
           message.from,
-          `❌ Subject "${subjectName}" not found.`
+          `❌ Subject "*${subjectName}*" not found.`
         );
+        this.activeCommand.delete(userId);
         return;
       }
 
-      const userId = message.from.replace("@c.us", "");
       this.editingSessions.set(userId, { subject, stage: "menu" });
 
       await this.client.sendMessage(
         message.from,
-        `Editing *${subject.subjectName}*. What would you like to change?
-1. Class Name
-2. Class Timing (e.g., 8:00 to 9:00)
-3. Class Day
-4. Total Classes
-5. Attended Classes
-6. Mass Bunked Classes
-Reply with the number of the option you want to edit or 'cancel' to exit.`
+        `✏️ *Editing: ${subject.subjectName}*\n\n` +
+          "What would you like to change?\n\n" +
+          "1. Class Name\n" +
+          "2. Class Timing\n" +
+          "3. Class Day\n" +
+          "4. Total Classes\n" +
+          "5. Attended Classes\n" +
+          "6. Mass Bunked Classes\n" +
+          "7. Holiday Classes\n\n" +
+          "Reply with the number of your choice, or type *'cancel'* to exit."
       );
     } catch (error) {
       console.error("Error editing subject:", error);
@@ -261,6 +344,7 @@ Reply with the number of the option you want to edit or 'cancel' to exit.`
         message.from,
         "❌ Sorry, there was an error editing the subject. Please try again."
       );
+      this.activeCommand.delete(userId);
     }
   }
 
@@ -274,17 +358,18 @@ Reply with the number of the option you want to edit or 'cancel' to exit.`
 
     if (response.toLowerCase() === "cancel") {
       this.editingSessions.delete(userId);
-      await this.client.sendMessage(message.from, "Editing cancelled.");
+      this.activeCommand.delete(userId);
+      await this.client.sendMessage(message.from, "👍 Editing cancelled.");
       return;
     }
 
     const stages = {
       menu: async () => {
         const choice = parseInt(response);
-        if (isNaN(choice) || choice < 1 || choice > 6) {
+        if (isNaN(choice) || choice < 1 || choice > 7) {
           await this.client.sendMessage(
             message.from,
-            "Invalid choice. Please reply with a number from 1 to 6 or 'cancel'."
+            "Invalid choice. Please reply with a number from 1 to 7 or 'cancel'."
           );
           return;
         }
@@ -296,11 +381,11 @@ Reply with the number of the option you want to edit or 'cancel' to exit.`
           "What is the new total number of classes?",
           "What is the new number of attended classes?",
           "What is the new number of mass bunked classes?",
+          "What is the new number of holiday classes?",
         ];
         await this.client.sendMessage(message.from, prompts[choice - 1]);
       },
       1: async () => {
-        // Class Name
         subject.subjectName = response;
         await subject.save();
         await this.client.sendMessage(
@@ -310,7 +395,6 @@ Reply with the number of the option you want to edit or 'cancel' to exit.`
         this.returnToEditMenu(message, subject);
       },
       2: async () => {
-        // Class Timing
         const [startTime, endTime] = response.split("to").map((t) => t.trim());
         const normalizedStartTime = Helpers.normalizeTime(startTime);
         const normalizedEndTime = Helpers.normalizeTime(endTime);
@@ -348,7 +432,6 @@ Reply with the number of the option you want to edit or 'cancel' to exit.`
         this.returnToEditMenu(message, subject);
       },
       3: async () => {
-        // Class Day
         const normalizedDay = Helpers.normalizeDayName(response);
         if (!Helpers.isValidDay(normalizedDay)) {
           await this.client.sendMessage(
@@ -366,7 +449,6 @@ Reply with the number of the option you want to edit or 'cancel' to exit.`
         this.returnToEditMenu(message, subject);
       },
       4: async () => {
-        // Total Classes
         const totalClasses = parseInt(response);
         if (isNaN(totalClasses) || totalClasses < 0) {
           await this.client.sendMessage(
@@ -384,7 +466,6 @@ Reply with the number of the option you want to edit or 'cancel' to exit.`
         this.returnToEditMenu(message, subject);
       },
       5: async () => {
-        // Attended Classes
         const attendedClasses = parseInt(response);
         if (
           isNaN(attendedClasses) ||
@@ -406,7 +487,6 @@ Reply with the number of the option you want to edit or 'cancel' to exit.`
         this.returnToEditMenu(message, subject);
       },
       6: async () => {
-        // Mass Bunked Classes
         const massBunkedClasses = parseInt(response);
         if (
           isNaN(massBunkedClasses) ||
@@ -427,6 +507,23 @@ Reply with the number of the option you want to edit or 'cancel' to exit.`
         );
         this.returnToEditMenu(message, subject);
       },
+      7: async () => {
+        const holidayClasses = parseInt(response);
+        if (isNaN(holidayClasses) || holidayClasses < 0) {
+          await this.client.sendMessage(
+            message.from,
+            "Invalid number. Please enter a positive number for holiday classes."
+          );
+          return;
+        }
+        subject.holidayClasses = holidayClasses;
+        await subject.save();
+        await this.client.sendMessage(
+          message.from,
+          `✅ Holiday classes updated to *${holidayClasses}*`
+        );
+        this.returnToEditMenu(message, subject);
+      },
     };
 
     if (stages[stage]) {
@@ -439,14 +536,16 @@ Reply with the number of the option you want to edit or 'cancel' to exit.`
     this.editingSessions.set(userId, { subject, stage: "menu" });
     await this.client.sendMessage(
       message.from,
-      `Anything else you would like to change for *${subject.subjectName}*?
-1. Class Name
-2. Class Timing
-3. Class Day
-4. Total Classes
-5. Attended Classes
-6. Mass Bunked Classes
-Reply with a number or 'cancel' to exit.`
+      `✏️ *Editing: ${subject.subjectName}*\n\n` +
+        "Anything else you would like to change?\n\n" +
+        "1. Class Name\n" +
+        "2. Class Timing\n" +
+        "3. Class Day\n" +
+        "4. Total Classes\n" +
+        "5. Attended Classes\n" +
+        "6. Mass Bunked Classes\n" +
+        "7. Holiday Classes\n\n" +
+        "Reply with a number or 'cancel' to exit."
     );
   }
 
@@ -458,7 +557,7 @@ Reply with a number or 'cancel' to exit.`
         this.messageHandler.pendingRemoveConfirmations.get(userId);
       await this.client.sendMessage(
         message.from,
-        `You already have a pending removal for "*${pending.subjectName}*".\n\n` +
+        `⚠️ You already have a pending removal for "*${pending.subjectName}*".\n\n` +
           `Please reply with "yes" or "no" to resolve it before removing another subject.`
       );
       return;
@@ -469,10 +568,11 @@ Reply with a number or 'cancel' to exit.`
     if (!subjectName) {
       await this.client.sendMessage(
         message.from,
-        " *Remove a Subject*\n\n" +
-          "Format: */remove <subject name>*\n\n" +
-          "Example: /remove Mathematics"
+        "🗑️ *Remove a Subject*\n\n" +
+          "Format: */remove <Subject Name>*\n" +
+          "Example: `/remove Mathematics`"
       );
+      this.activeCommand.delete(userId);
       return;
     }
 
@@ -482,8 +582,9 @@ Reply with a number or 'cancel' to exit.`
       if (!subject) {
         await this.client.sendMessage(
           message.from,
-          `❌ Subject "${subjectName}" not found.`
+          `❌ Subject "*${subjectName}*" not found.`
         );
+        this.activeCommand.delete(userId);
         return;
       }
 
@@ -505,7 +606,30 @@ Reply with a number or 'cancel' to exit.`
         message.from,
         "❌ Sorry, there was an error trying to remove the subject. Please try again."
       );
+      this.activeCommand.delete(userId);
     }
+  }
+
+  async handleClearList(message, args, user) {
+    const userId = user._id;
+
+    if (this.messageHandler.pendingClearListConfirmations.has(userId)) {
+      await this.client.sendMessage(
+        message.from,
+        `⚠️ You already have a pending clear list confirmation.\n\n` +
+          `Please reply with "yes" or "no" to resolve it.`
+      );
+      return;
+    }
+    this.messageHandler.pendingClearListConfirmations.set(userId, {
+      timestamp: Date.now(),
+    });
+
+    await this.client.sendMessage(
+      message.from,
+      `⚠️ Are you sure you want to remove all subjects? This action cannot be undone.\n\n` +
+        `Reply with *"yes"* to confirm or *"no"* to cancel.`
+    );
   }
 
   async handleShow(message, args, user) {
@@ -525,6 +649,135 @@ Reply with a number or 'cancel' to exit.`
         message.from,
         "❌ Sorry, there was an error retrieving attendance data."
       );
+    } finally {
+      this.activeCommand.delete(user._id);
+    }
+  }
+
+  async handleBreakeven(message, args, user) {
+    const command = args.join(" ");
+    const userId = user._id;
+
+    const match = command.match(/(.+)\s+at\s+(\d{1,2})%?/);
+    if (!match) {
+      await this.client.sendMessage(
+        message.from,
+        "📊 *Breakeven Calculator*\n\n" +
+          "Please use the format:\n" +
+          "*/breakeven <Subject Name> at <Target Percentage>*"
+      );
+      this.activeCommand.delete(userId);
+      return;
+    }
+
+    const [, subjectName, percentage] = match;
+    const targetPercentage = parseInt(percentage);
+
+    if (
+      isNaN(targetPercentage) ||
+      targetPercentage < 0 ||
+      targetPercentage > 100
+    ) {
+      await this.client.sendMessage(
+        message.from,
+        "❌ Please enter a valid percentage (0-100)."
+      );
+      this.activeCommand.delete(userId);
+      return;
+    }
+
+    try {
+      const subject = await Subject.findByUserAndName(
+        userId,
+        subjectName.trim()
+      );
+      if (!subject) {
+        await this.client.sendMessage(
+          message.from,
+          `❌ Subject "*${subjectName.trim()}*" not found.`
+        );
+        this.activeCommand.delete(userId);
+        return;
+      }
+
+      const result = Helpers.calculateBreakeven(
+        subject.attendedClasses,
+        subject.totalClasses,
+        targetPercentage
+      );
+
+      let response = `📊 *Breakeven Analysis for ${subject.subjectName}*\n\n`;
+      response += `*Current Attendance:* ${subject.attendancePercentage}%\n`;
+      response += `*Target Attendance:* ${targetPercentage}%\n\n`;
+
+      if (result.type === "surplus") {
+        response += `✅ You can miss the next *${result.classes}* classes and still maintain your target attendance.`;
+      } else if (result.type === "deficit") {
+        response += `⚠️ You need to attend the next *${result.classes}* classes to reach your target attendance.`;
+      } else {
+        response += "🎉 You are exactly at your target attendance!";
+      }
+
+      await this.client.sendMessage(message.from, response);
+    } catch (error) {
+      console.error("Error handling breakeven command:", error);
+      await this.client.sendMessage(
+        message.from,
+        "❌ An error occurred while calculating the breakeven point."
+      );
+    } finally {
+      this.activeCommand.delete(userId);
+    }
+  }
+
+  async handleSummary(message, args, user) {
+    const userId = user._id;
+    try {
+      const subjects = await Subject.findActiveByUser(userId);
+
+      if (subjects.length === 0) {
+        await this.client.sendMessage(
+          message.from,
+          "📚 *No Subjects Found*\n\nYou haven't added any subjects yet."
+        );
+        this.activeCommand.delete(userId);
+        return;
+      }
+
+      let response = "📊 *Attendance Summary*\n\n";
+
+      for (const subject of subjects) {
+        const percentage = subject.attendancePercentage;
+        const percentageWithBunks = subject.attendancePercentageWithBunks;
+        const emoji = Helpers.getAttendanceEmoji(percentage);
+        const breakeven = Helpers.calculateBreakeven(
+          subject.attendedClasses,
+          subject.totalClasses,
+          ATTENDANCE_THRESHOLDS.LOW
+        );
+
+        response += `*${subject.subjectName}*\n`;
+        response += `${emoji} Total: *${percentage}%* (${subject.attendedClasses}/${subject.totalClasses})\n`;
+        response += `Total (no bunks): *${percentageWithBunks}%*\n`;
+
+        if (breakeven.type === "surplus") {
+          response += `✅ You can leave next *${breakeven.classes}* classes\n\n`;
+        } else if (breakeven.type === "deficit") {
+          response += `❌ You need to attend next *${breakeven.classes}* classes\n\n`;
+        } else {
+          response += `👍 You are exactly at the ${ATTENDANCE_THRESHOLDS.LOW}% target.\n\n`;
+        }
+      }
+
+      await this.client.sendMessage(message.from, response.trim());
+    } catch (error) {
+      console.error("Error handling summary command:", error);
+      await this.client.sendMessage(
+        message.from,
+        "❌ An error occurred while generating your summary."
+      );
+    } finally {
+      this.activeCommand.delete(userId);
     }
   }
 
@@ -573,7 +826,7 @@ Reply with a number or 'cancel' to exit.`
     if (!subject) {
       await this.client.sendMessage(
         message.from,
-        `❌ Subject "${subjectName}" not found.`
+        `❌ Subject "*${subjectName}*" not found.`
       );
       return;
     }
@@ -584,15 +837,14 @@ Reply with a number or 'cancel' to exit.`
     const nextClass = subject.getNextClassTime(user.timezone);
 
     let response = `📊 *${subject.subjectName} - Detailed View*\n\n`;
-    response += `${status} *Attendance: ${percentage}%* (including mass bunks)\n`;
-    response += `*Attendance: ${percentageWithBunks}%* (excluding mass bunks)\n`;
-    response += `✅ Present: ${subject.attendedClasses} classes\n`;
-    response += `❌ Total: ${subject.totalClasses} classes\n`;
-    response += `🤪 Mass Bunked: ${subject.massBunkedClasses} classes\n\n`;
-
+    response += `${status} *Attendance:* ${percentage}% (including mass bunks)\n`;
+    response += `*Attendance (no bunks):* ${percentageWithBunks}%\n`;
+    response += `✅ *Present:* ${subject.attendedClasses} classes\n`;
+    response += `*Total Classes Held:* ${subject.totalClasses} classes\n`;
+    response += `🤪 *Mass Bunked:* ${subject.massBunkedClasses} classes\n`;
+    response += `🎉 *Holidays:* ${subject.holidayClasses} classes\n\n`;
     response += `📅 *Schedule:* ${subject.schedule.day}s at ${subject.schedule.time}\n`;
     response += `⏱️ *Duration:* ${subject.schedule.duration} hour(s)\n\n`;
-
     response += `🗓️ *Next Class:* ${nextClass.format(
       "dddd, MMM Do [at] h:mm A"
     )}\n\n`;
@@ -604,7 +856,7 @@ Reply with a number or 'cancel' to exit.`
         75
       );
       response += `⚠️ *Low Attendance Alert!*\n`;
-      response += `You need to attend ${classesNeeded} more classes to reach 75%`;
+      response += `You need to attend *${classesNeeded}* more classes to reach 75%.`;
     }
 
     await this.client.sendMessage(message.from, response);
@@ -617,21 +869,49 @@ Reply with a number or 'cancel' to exit.`
       await this.client.sendMessage(
         message.from,
         "📚 *No Subjects Found*\n\n" +
-          "You haven't added any subjects yet.\n" +
-          "Use */add* to add your first subject!"
+          "You haven't added any subjects yet. Use */add* to get started!"
       );
-      return;
+    } else {
+      let response = "📚 *Your Subjects*\n\n";
+
+      subjects.forEach((subject, index) => {
+        response += `${index + 1}. *${subject.subjectName}*\n`;
+        response += `   📅 ${subject.schedule.day}s at ${subject.schedule.time}\n`;
+        response += `   ⏱️ ${subject.schedule.duration} hour(s)\n\n`;
+      });
+
+      await this.client.sendMessage(message.from, response);
     }
 
-    let response = "📚 *Your Subjects*\n\n";
+    this.activeCommand.delete(user._id);
+  }
 
-    subjects.forEach((subject, index) => {
-      response += `${index + 1}. *${subject.subjectName}*\n`;
-      response += `   📅 ${subject.schedule.day}s at ${subject.schedule.time}\n`;
-      response += `   ⏱️ ${subject.schedule.duration} hour(s)\n\n`;
-    });
+  async handleDayCommand(message, user, day) {
+    const userId = user._id;
+    try {
+      const subjects = await Subject.findActiveByUserAndDay(userId, day);
 
-    await this.client.sendMessage(message.from, response);
+      if (subjects.length === 0) {
+        await this.client.sendMessage(
+          message.from,
+          `🗓️ No classes scheduled for ${day}.`
+        );
+      } else {
+        let response = `🗓️ *Your Schedule for ${day}*\n\n`;
+        subjects.forEach((subject) => {
+          response += `• *${subject.schedule.time}* - ${subject.subjectName}\n`;
+        });
+        await this.client.sendMessage(message.from, response);
+      }
+    } catch (error) {
+      console.error(`Error handling /${day.toLowerCase()} command:`, error);
+      await this.client.sendMessage(
+        message.from,
+        "❌ Sorry, there was an error retrieving your schedule."
+      );
+    } finally {
+      this.activeCommand.delete(userId);
+    }
   }
 
   async handleTimezone(message, args, user) {
@@ -641,10 +921,10 @@ Reply with a number or 'cancel' to exit.`
       await this.client.sendMessage(
         message.from,
         `🌍 *Current Timezone*\n\n` +
-          `Your timezone: ${user.timezone}\n\n` +
-          `To change it, use: */timezone <timezone>*\n` +
-          `Example: /timezone America/New_York`
+          `Your timezone is currently set to: *${user.timezone}*.\n\n` +
+          `To change it, use: */timezone <Your_Timezone>*`
       );
+      this.activeCommand.delete(user._id);
       return;
     }
 
@@ -657,52 +937,53 @@ Reply with a number or 'cancel' to exit.`
       await this.client.sendMessage(
         message.from,
         `✅ *Timezone Updated*\n\n` +
-          `Your timezone has been set to: ${timezone}\n` +
-          `Current time: ${moment().tz(timezone).format("LLLL")}`
+          `Your timezone has been set to: *${timezone}*\n` +
+          `Your current time: ${moment().tz(timezone).format("LT")}`
       );
     } catch (error) {
       await this.client.sendMessage(
         message.from,
-        `❌ Invalid timezone "${timezone}"\n\n` +
-          `Please use a valid timezone like:\n` +
-          `• Asia/Kolkata\n` +
-          `• America/New_York\n` +
-          `• Europe/London`
+        `❌ *Invalid Timezone*\n\n` +
+          `"*${timezone}*" is not a valid timezone.\n\n` +
+          `Please use a standard format like *America/New_York*, *Europe/London*, or *Asia/Kolkata*.`
       );
+    } finally {
+      this.activeCommand.delete(user._id);
     }
   }
 
   async handleSettings(message, args, user) {
     const response =
       `⚙️ *Your Settings*\n\n` +
-      `👤 Name: ${user.name}\n` +
-      `🌍 Timezone: ${user.timezone}\n` +
-      `🔔 Reminders: ${
+      `*Name:* ${user.name}\n` +
+      `*Timezone:* ${user.timezone}\n` +
+      `*Reminders:* ${
         user.preferences.reminderEnabled ? "Enabled" : "Disabled"
       }\n` +
-      `⚠️ Low Attendance Alerts: ${
+      `*Low Attendance Alerts:* ${
         user.preferences.lowAttendanceAlerts ? "Enabled" : "Disabled"
-      }\n\n` +
-      `_To change timezone: /timezone <timezone>_`;
+      }`;
 
     await this.client.sendMessage(message.from, response);
+    this.activeCommand.delete(user._id);
   }
 
   async handleUnknownCommand(message) {
     await this.client.sendMessage(
       message.from,
-      "❓ Unknown command.\n\n" + "Type */help* to see all available commands."
+      "❓ *Unknown Command*\n\n" + "Type */help* to see all available commands."
     );
   }
 
   async handleDeleteUser(message, args, user) {
     const confirmationPhrase = "confirmed";
     const userInput = args.join(" ").trim();
+    const userId = user._id;
 
     if (userInput.toLowerCase() !== confirmationPhrase) {
       await this.client.sendMessage(
         message.from,
-        "*⚠️ This is an irreversible action!* All of your data will be permanently deleted.\n\n" +
+        "⚠️ *This is an irreversible action!* All of your data will be permanently deleted.\n\n" +
           "To confirm, please type the following phrase exactly as shown:\n" +
           `*/deleteuser ${confirmationPhrase}*`
       );
@@ -710,15 +991,13 @@ Reply with a number or 'cancel' to exit.`
     }
 
     try {
-      const userId = user._id;
       const userName = user.name;
-
       const deleted = await User.deleteUserAndData(userId);
 
       if (deleted) {
         await this.client.sendMessage(
           message.from,
-          `✅ *Account Deleted Successfully.*\n\n` +
+          `✅ *Account Deleted Successfully*\n\n` +
             `All data associated with ${userName} has been permanently removed. We're sorry to see you go!`
         );
       } else {
@@ -732,6 +1011,252 @@ Reply with a number or 'cancel' to exit.`
       await this.client.sendMessage(
         message.from,
         "❌ An error occurred while trying to delete your account. Please contact support."
+      );
+    } finally {
+      this.activeCommand.delete(userId);
+    }
+  }
+
+  async handleTestConfirm(message, args, user) {
+    const userId = user._id;
+    if (
+      process.env.NODE_ENV !== "development" &&
+      process.env.DEV_MODE !== "true"
+    ) {
+      await this.handleUnknownCommand(message);
+      this.activeCommand.delete(userId);
+      return;
+    }
+
+    try {
+      const testClassTime = moment().tz(user.timezone).subtract(5, "seconds");
+      const currentDay = testClassTime.format("dddd");
+
+      let testSubject = await Subject.findOneAndUpdate(
+        { userId: user._id, subjectName: "Test Subject" },
+        {
+          $set: {
+            "schedule.day": currentDay,
+            "schedule.time": testClassTime.format("HH:mm"),
+            "schedule.duration": 1,
+            isActive: true,
+          },
+        },
+        { upsert: true, new: true }
+      );
+
+      await AttendanceRecord.deleteMany({
+        userId: user._id,
+        subjectId: testSubject._id,
+        status: "pending",
+      });
+
+      const record = new AttendanceRecord({
+        userId: user._id,
+        subjectId: testSubject._id,
+        scheduledTime: testClassTime.toDate(),
+        date: testClassTime.startOf("day").toDate(),
+        status: "pending",
+        confirmationSent: false,
+        reminderSent: false,
+      });
+
+      await record.save();
+
+      await this.client.sendMessage(
+        message.from,
+        `🧪 *Test Confirmation Created*\n\n` +
+          `A pending attendance record has been created for "Test Subject".\n` +
+          `The confirmation message should arrive within the next minute.`
+      );
+
+      setTimeout(async () => {
+        await this.schedulerService.checkForAttendanceConfirmations();
+        this.activeCommand.delete(userId);
+      }, 2000);
+    } catch (error) {
+      console.error("Error in test confirm command:", error);
+      await this.client.sendMessage(
+        message.from,
+        "❌ Sorry, there was an error creating the test confirmation."
+      );
+      this.activeCommand.delete(userId);
+    }
+  }
+
+  async handleTestAlert(message, args, user) {
+    const userId = user._id;
+    if (
+      process.env.NODE_ENV !== "development" &&
+      process.env.DEV_MODE !== "true"
+    ) {
+      await this.handleUnknownCommand(message);
+      this.activeCommand.delete(userId);
+      return;
+    }
+
+    try {
+      let testSubject = await Subject.findOneAndUpdate(
+        { userId: user._id, subjectName: "Test Alert Subject" },
+        {
+          $set: {
+            totalClasses: 10,
+            attendedClasses: 5, // 50% attendance
+            isActive: true,
+            "schedule.day": moment().format("dddd"),
+            "schedule.time": "00:00",
+            "schedule.duration": 1,
+          },
+        },
+        { upsert: true, new: true }
+      );
+
+      await this.client.sendMessage(
+        message.from,
+        `🧪 Simulating low attendance for *${testSubject.subjectName}*. Triggering alert check...`
+      );
+
+      await this.schedulerService.checkForLowAttendance();
+    } catch (error) {
+      console.error("Error in test alert command:", error);
+      await this.client.sendMessage(
+        message.from,
+        "❌ Sorry, there was an error triggering the test alert."
+      );
+    } finally {
+      this.activeCommand.delete(userId);
+    }
+  }
+
+  async handleTestRemind(message, args, user) {
+    const userId = user._id;
+    if (
+      process.env.NODE_ENV !== "development" &&
+      process.env.DEV_MODE !== "true"
+    ) {
+      await this.handleUnknownCommand(message);
+      this.activeCommand.delete(userId);
+      return;
+    }
+
+    try {
+      const reminderTime = moment().tz(user.timezone).add(10, "minutes");
+      const currentDay = reminderTime.format("dddd");
+
+      let testSubject = await Subject.findOneAndUpdate(
+        { userId: user._id, subjectName: "Test Reminder Subject" },
+        {
+          $set: {
+            "schedule.day": currentDay,
+            "schedule.time": reminderTime.format("HH:mm"),
+            "schedule.duration": 1,
+            isActive: true,
+          },
+        },
+        { upsert: true, new: true }
+      );
+
+      await this.client.sendMessage(
+        message.from,
+        `🧪 A test reminder for *${testSubject.subjectName}* should arrive within the next minute.`
+      );
+
+      setTimeout(async () => {
+        await this.schedulerService.checkForClassReminders();
+      }, 2000);
+    } catch (error) {
+      console.error("Error in test remind command:", error);
+      await this.client.sendMessage(
+        message.from,
+        "❌ Sorry, there was an error triggering the test reminder."
+      );
+    } finally {
+      this.activeCommand.delete(userId);
+    }
+  }
+
+  async handleClearConfirm(message, args, user) {
+    if (
+      process.env.NODE_ENV !== "development" &&
+      process.env.DEV_MODE !== "true"
+    ) {
+      await this.handleUnknownCommand(message);
+      return;
+    }
+
+    try {
+      await AttendanceRecord.deleteMany({
+        userId: user._id,
+        status: "pending",
+      });
+      await this.client.sendMessage(
+        message.from,
+        "✅ Pending confirmations cleared."
+      );
+    } catch (error) {
+      console.error("Error clearing confirmations:", error);
+      await this.client.sendMessage(
+        message.from,
+        "❌ Error clearing confirmations."
+      );
+    }
+  }
+
+  async handleDebugAttendance(message, args, user) {
+    if (
+      process.env.NODE_ENV !== "development" &&
+      process.env.DEV_MODE !== "true"
+    ) {
+      await this.handleUnknownCommand(message);
+      return;
+    }
+
+    try {
+      const allRecords = await AttendanceRecord.find({ userId: user._id })
+        .populate("subjectId")
+        .sort({ scheduledTime: -1 })
+        .limit(10);
+
+      const pendingRecords = await AttendanceRecord.find({
+        userId: user._id,
+        status: "pending",
+      })
+        .populate("subjectId")
+        .sort({ scheduledTime: -1 });
+
+      let debugMessage = `🐛 *Debug: Attendance Records*\n\n`;
+      debugMessage += `📊 Total Records (last 10): ${allRecords.length}\n`;
+      debugMessage += `⏳ Pending Records: ${pendingRecords.length}\n\n`;
+
+      if (pendingRecords.length > 0) {
+        debugMessage += `*Pending Records:*\n`;
+        for (const record of pendingRecords) {
+          const subject = record.subjectId;
+          debugMessage += `• ${subject?.subjectName || "Unknown Subject"}\n`;
+          debugMessage += `   Date: ${record.date?.toDateString()}\n`;
+          debugMessage += `   Scheduled: ${record.scheduledTime}\n`;
+          debugMessage += `   Status: ${record.status}\n`;
+          debugMessage += `   Confirmation Sent: ${record.confirmationSent}\n`;
+          debugMessage += `   Reminder Sent: ${record.reminderSent}\n\n`;
+        }
+      }
+
+      if (allRecords.length > 0) {
+        debugMessage += `*Recent Records:*\n`;
+        for (const record of allRecords.slice(0, 5)) {
+          const subject = record.subjectId;
+          debugMessage += `• ${subject?.subjectName || "Unknown"} - ${
+            record.status
+          }\n`;
+        }
+      }
+
+      await this.client.sendMessage(message.from, debugMessage);
+    } catch (error) {
+      console.error("Error in debug attendance:", error);
+      await this.client.sendMessage(
+        message.from,
+        `❌ Debug error: ${error.message}`
       );
     }
   }

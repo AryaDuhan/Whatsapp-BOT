@@ -14,18 +14,45 @@ class SchedulerService {
     this.whatsappClient = whatsappClient;
     console.log("🕐 Initializing Scheduler Service...");
 
-    // jobs to run every min to check for reminders and confirmations
+    // Create attendance records for today's classes on startup
+    await this.createDailyAttendanceRecords();
+
+    // Schedule daily record creation at midnight
+    this.scheduleDailyRecordCreation();
+
+    // Other existing schedules...
     this.scheduleReminderCheck();
     this.scheduleConfirmationCheck();
     this.scheduleOverdueCheck();
     this.scheduleLowAttendanceCheck();
     this.scheduleTimetableConfirmationCleanup();
 
-    console.log(" Service initialized successfully");
+    console.log("✅ Scheduler Service initialized successfully");
+  }
+
+  scheduleDailyRecordCreation() {
+    // Run every day at midnight to create records for the next day
+    const job = cron.schedule(
+      "0 0 * * *",
+      async () => {
+        try {
+          await this.createDailyAttendanceRecords();
+        } catch (error) {
+          console.error("❌ Error in daily record creation:", error);
+        }
+      },
+      {
+        scheduled: true,
+        timezone: "UTC",
+      }
+    );
+
+    this.jobs.set("dailyRecordCreation", job);
+    console.log("📅 Daily record creation scheduled (midnight daily)");
   }
 
   scheduleReminderCheck() {
-    // Check every min for classes that need reminders
+    // Check every minute
     const job = cron.schedule(
       "* * * * *",
       async () => {
@@ -46,7 +73,7 @@ class SchedulerService {
   }
 
   scheduleConfirmationCheck() {
-    // for classes that need attendance confirmation
+    // Check every minute
     const job = cron.schedule(
       "* * * * *",
       async () => {
@@ -114,7 +141,6 @@ class SchedulerService {
       "*/5 * * * *",
       async () => {
         try {
-          // access the messageHandler through the main bot instance
           if (global.attendanceBot && global.attendanceBot.messageHandler) {
             global.attendanceBot.messageHandler.cleanupExpiredConfirmations();
           }
@@ -134,6 +160,66 @@ class SchedulerService {
     );
   }
 
+  async createDailyAttendanceRecords() {
+    try {
+      console.log("📝 Creating daily attendance records...");
+
+      const subjects = await Subject.find({ isActive: true }).populate(
+        "userId"
+      );
+      const today = moment().format("dddd");
+
+      for (const subject of subjects) {
+        if (!subject.userId) continue;
+
+        const user = subject.userId;
+
+        if (subject.schedule.day.toLowerCase() === today.toLowerCase()) {
+          const classTime = moment()
+            .tz(user.timezone)
+            .set({
+              hour: parseInt(subject.schedule.time.split(":")[0]),
+              minute: parseInt(subject.schedule.time.split(":")[1]),
+              second: 0,
+              millisecond: 0,
+            });
+
+          if (classTime.isAfter(moment())) {
+            const startOfDay = classTime.clone().startOf("day");
+
+            const existingRecord = await AttendanceRecord.findOne({
+              userId: user._id,
+              subjectId: subject._id,
+              date: {
+                $gte: startOfDay.toDate(),
+                $lt: startOfDay.clone().add(1, "day").toDate(),
+              },
+            });
+
+            if (!existingRecord) {
+              const record = new AttendanceRecord({
+                userId: user._id,
+                subjectId: subject._id,
+                date: startOfDay.toDate(),
+                scheduledTime: classTime.toDate(),
+                status: "pending",
+                confirmationSent: false,
+                reminderSent: false,
+              });
+
+              await record.save();
+              console.log(
+                `✅ Created attendance record for ${user.name} - ${subject.subjectName}`
+              );
+            }
+          }
+        }
+      }
+    } catch (error) {
+      console.error("❌ Error creating daily attendance records:", error);
+    }
+  }
+
   async checkForClassReminders() {
     try {
       const now = moment().utc();
@@ -148,7 +234,6 @@ class SchedulerService {
         const nextClassTime = subject.getNextClassTime(user.timezone);
         const reminderTime = nextClassTime.clone().subtract(10, "minutes");
 
-        // check if should send a reminder now (within 1 min window)
         if (Math.abs(now.diff(reminderTime, "minutes")) < 1) {
           await this.sendClassReminder(user, subject, nextClassTime);
         }
@@ -160,38 +245,41 @@ class SchedulerService {
 
   async checkForAttendanceConfirmations() {
     try {
-      const now = moment().utc();
-      const subjects = await Subject.find({ isActive: true }).populate(
-        "userId"
-      );
+      const now = moment();
 
-      for (const subject of subjects) {
-        if (!subject.userId) continue;
+      const pendingRecords = await AttendanceRecord.find({
+        status: "pending",
+        confirmationSent: false,
+        scheduledTime: {
+          $gte: moment().subtract(24, "hours").toDate(),
+          $lte: now.toDate(),
+        },
+      })
+        .populate("userId")
+        .populate("subjectId");
 
-        const user = subject.userId;
-        const nextClassTime = subject.getNextClassTime(user.timezone);
+      for (const record of pendingRecords) {
+        if (!record.userId || !record.subjectId) continue;
 
-        // **FIX:** Calculate the class end time first
-        const classEndTime = nextClassTime
-          .clone()
-          .add(subject.schedule.duration, "hours");
+        const user = record.userId;
+        const subject = record.subjectId;
+        const classTime = moment(record.scheduledTime);
 
-        // **FIX:** Get the delay from environment variables, defaulting to 10 minutes
         const confirmationDelay =
-          parseInt(process.env.CONFIRMATION_MINUTES_AFTER) || 10;
-
-        // **FIX:** Calculate the exact time to send the confirmation message
-        const confirmationTime = classEndTime
+          process.env.NODE_ENV === "development" ? 10 : 15 * 60;
+        const confirmationTime = classTime
           .clone()
-          .add(confirmationDelay, "minutes");
+          .add(confirmationDelay, "seconds");
 
-        // check if should send confirmation now (within 1 minute window)
-        if (Math.abs(now.diff(confirmationTime, "minutes")) < 1) {
-          await this.sendAttendanceConfirmation(user, subject, nextClassTime);
+        if (now.isAfter(confirmationTime) && !record.confirmationSent) {
+          console.log(
+            `📤 Sending confirmation for ${subject.subjectName} to ${user.name}`
+          );
+          await this.sendAttendanceConfirmation(user, subject, record);
         }
       }
     } catch (error) {
-      console.error("Error checking for attendance confirmations:", error);
+      console.error("❌ Error checking for attendance confirmations:", error);
     }
   }
 
@@ -202,11 +290,9 @@ class SchedulerService {
       for (const record of overdueRecords) {
         if (!record.subjectId) continue;
 
-        // mark absent cuz no response
         await record.markAbsent(true);
         await record.subjectId.markAttendance(false);
 
-        // send noti to user
         const user = await User.findById(record.userId);
         if (user && this.whatsappClient) {
           const message =
@@ -252,21 +338,34 @@ class SchedulerService {
   }
 
   async sendClassReminder(user, subject, classTime) {
-    if (!this.whatsappClient || !user.preferences.reminderEnabled) return;
+    if (!this.whatsappClient || !user.preferences.reminderEnabled) {
+      console.log(
+        `📱 Reminder not sent: WhatsApp unavailable or reminders disabled`
+      );
+      return;
+    }
 
     try {
-      // check if reminder already sent for this class
+      console.log(
+        `🔔 Sending reminder for ${subject.subjectName} to ${user.name}`
+      );
+
       const today = moment().tz(user.timezone).startOf("day");
-      const existingRecord = await AttendanceRecord.findOne({
+      const tomorrow = today.clone().add(1, "day");
+
+      let existingRecord = await AttendanceRecord.findOne({
         userId: user._id,
         subjectId: subject._id,
         date: {
           $gte: today.toDate(),
-          $lt: today.clone().add(1, "day").toDate(),
+          $lt: tomorrow.toDate(),
         },
       });
 
-      if (existingRecord && existingRecord.reminderSent) return;
+      if (existingRecord && existingRecord.reminderSent) {
+        console.log(`📝 Reminder already sent for this class`);
+        return;
+      }
 
       const message =
         `🔔 *Class Reminder*\n\n` +
@@ -277,43 +376,42 @@ class SchedulerService {
 
       await this.sendMessage(user._id, message);
 
-      // create or update attendance record
       if (!existingRecord) {
-        const record = AttendanceRecord.createForClass(
+        existingRecord = AttendanceRecord.createForClass(
           user._id,
           subject._id,
           classTime.toDate()
         );
-        record.reminderSent = true;
-        await record.save();
-      } else {
-        existingRecord.reminderSent = true;
-        await existingRecord.save();
       }
 
-      console.log(`🔔 Reminder sent: ${user.name} - ${subject.subjectName}`);
+      existingRecord.reminderSent = true;
+      await existingRecord.save();
+
+      console.log(
+        `🔔 Reminder sent successfully: ${user.name} - ${subject.subjectName}`
+      );
     } catch (error) {
-      console.error("Error sending class reminder:", error);
+      console.error("❌ Error sending class reminder:", error);
     }
   }
 
-  async sendAttendanceConfirmation(user, subject, classTime) {
-    if (!this.whatsappClient) return;
+  async sendAttendanceConfirmation(user, subject, record) {
+    if (!this.whatsappClient) {
+      console.log(`📱 WhatsApp client not available`);
+      return;
+    }
 
     try {
-      // find the attendance record for this class
-      const today = moment().tz(user.timezone).startOf("day");
-      const record = await AttendanceRecord.findOne({
-        userId: user._id,
-        subjectId: subject._id,
-        date: {
-          $gte: today.toDate(),
-          $lt: today.clone().add(1, "day").toDate(),
-        },
-      });
+      console.log(
+        `📤 Attempting to send confirmation for ${subject.subjectName} to ${user.name}`
+      );
 
-      if (!record || record.confirmationSent || record.status !== "pending")
+      if (record.status !== "pending" || record.confirmationSent) {
+        console.log(`⚠️ Record is no longer pending or already sent`);
         return;
+      }
+
+      const classTime = moment(record.scheduledTime).tz(user.timezone);
 
       const message =
         `✅ *Attendance Confirmation*\n\n` +
@@ -324,7 +422,8 @@ class SchedulerService {
         `Reply with:\n` +
         `• *Yes* - if you attended\n` +
         `• *No* - if you missed it\n` +
-        `• *Mass Bunk* - if it was a mass bunk\n\n` +
+        `• *Mass Bunk* - if it was a mass bunk\n` +
+        `• *Holiday* - if the class was cancelled\n\n` +
         `⏳ You have 2 hours to respond, or you'll be marked absent.`;
 
       await this.sendMessage(user._id, message);
@@ -333,10 +432,10 @@ class SchedulerService {
       await record.save();
 
       console.log(
-        `✅ Confirmation sent: ${user.name} - ${subject.subjectName}`
+        `✅ Confirmation sent successfully: ${user.name} - ${subject.subjectName}`
       );
     } catch (error) {
-      console.error("Error sending attendance confirmation:", error);
+      console.error("❌ Error sending attendance confirmation:", error);
     }
   }
 

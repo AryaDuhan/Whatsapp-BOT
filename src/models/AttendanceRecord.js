@@ -22,7 +22,7 @@ const attendanceRecordSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ["present", "absent", "pending", "massBunked"],
+      enum: ["present", "absent", "pending", "massBunked", "holiday"],
       default: "pending",
     },
     responseTime: {
@@ -52,7 +52,8 @@ const attendanceRecordSchema = new mongoose.Schema(
   }
 );
 
-// instance methods
+// --- Instance Methods ---
+
 attendanceRecordSchema.methods.markPresent = function (
   responseTime = new Date()
 ) {
@@ -78,12 +79,19 @@ attendanceRecordSchema.methods.markMassBunk = function (
   return this.save();
 };
 
+attendanceRecordSchema.methods.markHoliday = function (
+  responseTime = new Date()
+) {
+  this.status = "holiday";
+  this.responseTime = responseTime;
+  return this.save();
+};
+
 attendanceRecordSchema.methods.isOverdue = function (timeoutHours = 2) {
   if (this.status !== "pending") return false;
 
   const timeoutMs = timeoutHours * 60 * 60 * 1000;
   const confirmationTime = new Date(
-    // 10 mins after class
     this.scheduledTime.getTime() + 10 * 60 * 1000
   );
   const deadline = new Date(confirmationTime.getTime() + timeoutMs);
@@ -91,7 +99,8 @@ attendanceRecordSchema.methods.isOverdue = function (timeoutHours = 2) {
   return new Date() > deadline;
 };
 
-// static methods
+// --- Static Methods ---
+
 attendanceRecordSchema.statics.createForClass = function (
   userId,
   subjectId,
@@ -113,7 +122,6 @@ attendanceRecordSchema.statics.findOverdueRecords = function (
   timeoutHours = 2
 ) {
   const timeoutMs = timeoutHours * 60 * 60 * 1000;
-  // account for 10-min delay
   const cutoffTime = new Date(Date.now() - timeoutMs - 10 * 60 * 1000);
 
   return this.find({
@@ -157,16 +165,49 @@ attendanceRecordSchema.statics.getUserAttendanceStats = function (
             $cond: [{ $eq: ["$status", "massBunked"] }, 1, 0],
           },
         },
+        holiday: {
+          $sum: {
+            $cond: [{ $eq: ["$status", "holiday"] }, 1, 0],
+          },
+        },
       },
     },
     {
-      $addFields: {
+      $lookup: {
+        from: "subjects",
+        localField: "_id",
+        foreignField: "_id",
+        as: "subject",
+      },
+    },
+    {
+      $unwind: "$subject",
+    },
+    {
+      $project: {
+        _id: 1,
+        total: 1,
+        present: 1,
+        absent: 1,
+        pending: 1,
+        massBunked: 1,
+        holiday: 1,
+        subjectName: "$subject.subjectName",
         attendancePercentage: {
           $round: [
             {
               $multiply: [
                 {
-                  $divide: ["$present", { $subtract: ["$total", "$pending"] }],
+                  $divide: [
+                    "$present",
+                    {
+                      $cond: [
+                        { $eq: ["$total", "$pending"] },
+                        1,
+                        { $subtract: ["$total", "$pending"] },
+                      ],
+                    },
+                  ],
                 },
                 100,
               ],
@@ -179,7 +220,7 @@ attendanceRecordSchema.statics.getUserAttendanceStats = function (
   ]);
 };
 
-// compound indexes
+// --- Indexes ---
 attendanceRecordSchema.index({ userId: 1, subjectId: 1, date: -1 });
 attendanceRecordSchema.index({ status: 1, scheduledTime: 1 });
 attendanceRecordSchema.index({ userId: 1, status: 1 });

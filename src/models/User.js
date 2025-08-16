@@ -68,15 +68,36 @@ userSchema.statics.createNewUser = function (whatsappId, name = null) {
 };
 
 userSchema.statics.deleteUserAndData = async function (userId) {
-  const Subject = mongoose.model("Subject");
-  const AttendanceRecord = mongoose.model("AttendanceRecord");
-  // delete all attendance records for the user
-  await AttendanceRecord.deleteMany({ userId: userId });
-  // delete all subjects for the user
-  await Subject.deleteMany({ userId: userId });
-  // delete the user
-  const result = await this.deleteOne({ _id: userId });
-  return result.deletedCount > 0;
+  if (process.env.NODE_ENV === "production") {
+    const session = await mongoose.startSession();
+    session.startTransaction();
+    try {
+      const Subject = mongoose.model("Subject");
+      const AttendanceRecord = mongoose.model("AttendanceRecord");
+      // delete all attendance records for the user
+      await AttendanceRecord.deleteMany({ userId: userId }, { session });
+      // delete all subjects for the user
+      await Subject.deleteMany({ userId: userId }, { session });
+      // delete the user
+      const result = await this.deleteOne({ _id: userId }, { session });
+
+      await session.commitTransaction();
+      session.endSession();
+      return result.deletedCount > 0;
+    } catch (error) {
+      await session.abortTransaction();
+      session.endSession();
+      throw error;
+    }
+  } else {
+    // Non transactional deletion for development
+    const Subject = mongoose.model("Subject");
+    const AttendanceRecord = mongoose.model("AttendanceRecord");
+    await AttendanceRecord.deleteMany({ userId: userId });
+    await Subject.deleteMany({ userId: userId });
+    const result = await this.deleteOne({ _id: userId });
+    return result.deletedCount > 0;
+  }
 };
 
 module.exports = mongoose.model("User", userSchema);

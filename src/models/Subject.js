@@ -1,4 +1,5 @@
 const mongoose = require("mongoose");
+const moment = require("moment-timezone");
 
 const subjectSchema = new mongoose.Schema(
   {
@@ -29,7 +30,6 @@ const subjectSchema = new mongoose.Schema(
       time: {
         type: String,
         required: true,
-        //hour min format
         match: /^([01]?[0-9]|2[0-3]):[0-5][0-9]$/,
       },
       duration: {
@@ -54,6 +54,11 @@ const subjectSchema = new mongoose.Schema(
       default: 0,
       min: 0,
     },
+    holidayClasses: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
     isActive: {
       type: Boolean,
       default: true,
@@ -65,35 +70,40 @@ const subjectSchema = new mongoose.Schema(
   }
 );
 
-// virtual for attendance percentage
+// --- Virtuals ---
+
 subjectSchema.virtual("attendancePercentage").get(function () {
-  if (this.totalClasses === 0) return 0;
-  return Math.round((this.attendedClasses / this.totalClasses) * 100);
+  const effectiveTotal = this.totalClasses;
+  if (effectiveTotal <= 0) return 100;
+  return Math.round((this.attendedClasses / effectiveTotal) * 100);
 });
 
-// virtual for attendance percentage without bunks
 subjectSchema.virtual("attendancePercentageWithBunks").get(function () {
-  if (this.totalClasses === 0) return 0;
-  const totalClassesWithBunks = this.totalClasses - this.massBunkedClasses;
-  if (totalClassesWithBunks === 0) return 0;
-  return Math.round((this.attendedClasses / totalClassesWithBunks) * 100);
+  const effectiveTotal = this.totalClasses - this.massBunkedClasses;
+  if (effectiveTotal <= 0) return 100;
+  return Math.round((this.attendedClasses / effectiveTotal) * 100);
 });
 
-// ensure virtual fields are in json output
 subjectSchema.set("toJSON", { virtuals: true });
 subjectSchema.set("toObject", { virtuals: true });
 
-// instance methods
+// --- Instance Methods ---
+
 subjectSchema.methods.markAttendance = function (
   isPresent = true,
-  isMassBunk = false
+  isMassBunk = false,
+  isHoliday = false
 ) {
-  this.totalClasses += 1;
-  if (isPresent) {
-    this.attendedClasses += 1;
-  }
-  if (isMassBunk) {
-    this.massBunkedClasses += 1;
+  if (isHoliday) {
+    this.holidayClasses += 1;
+  } else {
+    this.totalClasses += 1;
+    if (isPresent) {
+      this.attendedClasses += 1;
+    }
+    if (isMassBunk) {
+      this.massBunkedClasses += 1;
+    }
   }
   return this.save();
 };
@@ -106,7 +116,6 @@ subjectSchema.methods.getAttendanceStatus = function () {
 };
 
 subjectSchema.methods.getNextClassTime = function (timezone = "Asia/Kolkata") {
-  const moment = require("moment-timezone");
   const days = [
     "Sunday",
     "Monday",
@@ -128,7 +137,6 @@ subjectSchema.methods.getNextClassTime = function (timezone = "Asia/Kolkata") {
     .minute(minutes)
     .second(0);
 
-  // if class time passed today schedule for next week
   if (nextClass.isSameOrBefore(now)) {
     nextClass.add(1, "week");
   }
@@ -136,7 +144,8 @@ subjectSchema.methods.getNextClassTime = function (timezone = "Asia/Kolkata") {
   return nextClass;
 };
 
-// static methods
+// --- Static Methods ---
+
 subjectSchema.statics.findByUserAndName = function (userId, subjectName) {
   return this.findOne({
     userId,
@@ -145,9 +154,28 @@ subjectSchema.statics.findByUserAndName = function (userId, subjectName) {
   });
 };
 
+subjectSchema.statics.findByUserAndNameAndDay = function (
+  userId,
+  subjectName,
+  day
+) {
+  return this.findOne({
+    userId,
+    subjectName: new RegExp(`^${subjectName}$`, "i"),
+    "schedule.day": day,
+    isActive: true,
+  });
+};
+
 subjectSchema.statics.findActiveByUser = function (userId) {
   return this.find({ userId, isActive: true }).sort({
     "schedule.day": 1,
+    "schedule.time": 1,
+  });
+};
+
+subjectSchema.statics.findActiveByUserAndDay = function (userId, day) {
+  return this.find({ userId, isActive: true, "schedule.day": day }).sort({
     "schedule.time": 1,
   });
 };
@@ -164,7 +192,7 @@ subjectSchema.statics.findLowAttendance = function (userId, threshold = 75) {
   });
 };
 
-// compound index
+// --- Indexes ---
 subjectSchema.index({ userId: 1, subjectName: 1, isActive: 1 });
 subjectSchema.index({ userId: 1, isActive: 1 });
 
