@@ -174,7 +174,7 @@ class SchedulerService {
 
         const user = subject.userId;
 
-        if (subject.schedule.day.toLowerCase() === today.toLowerCase()) {
+        if (subject.schedule?.day?.toLowerCase() === today.toLowerCase()) {
           const classTime = moment()
             .tz(user.timezone)
             .set({
@@ -231,6 +231,11 @@ class SchedulerService {
         if (!subject.userId) continue;
 
         const user = subject.userId;
+        
+        if (!subject.schedule || !subject.schedule.time || !subject.schedule.day) {
+          continue; // Skip subjects with corrupted schedule data
+        }
+
         const nextClassTime = subject.getNextClassTime(user.timezone);
         const reminderTime = nextClassTime.clone().subtract(10, "minutes");
 

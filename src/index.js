@@ -43,7 +43,6 @@ class AttendanceBot {
           "--disable-accelerated-2d-canvas",
           "--no-first-run",
           "--no-zygote",
-          "--single-process",
           "--disable-gpu",
         ],
       },
@@ -62,8 +61,20 @@ class AttendanceBot {
     global.attendanceBot = this;
 
     this.startSecurityMonitoring();
+  }
 
-    this.initializeBot();
+  async start() {
+    try {
+      await this.databaseService.connect();
+      await this.schedulerService.initialize();
+      this.schedulerService.setWhatsAppClient(this.client);
+      
+      this.initializeBot();
+    } catch (error) {
+      this.logger.error("Failed to start AttendanceBot", error);
+      console.error("Failed to start AttendanceBot:", error);
+      process.exit(1);
+    }
   }
 
   initializeBot() {
@@ -76,14 +87,11 @@ class AttendanceBot {
       console.log("WhatsApp attendance bot is ready!");
       console.log(`Bot Number: ${this.client.info.wid.user}`);
 
-      await this.databaseService.connect();
-      await this.schedulerService.initialize();
-      this.schedulerService.setWhatsAppClient(this.client);
-
       console.log("Bot is now fully operational!");
     });
 
     this.client.on("message", async (message) => {
+      console.log(`[DEBUG] Received message from ${message.from}: ${message.body}`);
       const startTime = Date.now();
       let userId = null;
 
@@ -312,3 +320,4 @@ process.on("SIGTERM", async () => {
 
 console.log("Starting WhatsApp Attendance Bot...");
 global.attendanceBot = new AttendanceBot();
+global.attendanceBot.start();

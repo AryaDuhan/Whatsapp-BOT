@@ -127,6 +127,11 @@ subjectSchema.methods.getNextClassTime = function (timezone = "Asia/Kolkata") {
   ];
 
   const now = moment().tz(timezone);
+  
+  if (!this.schedule || !this.schedule.day || !this.schedule.time) {
+    return now.clone().add(1, "year"); // Return a dummy date far in the future
+  }
+
   const targetDay = days.indexOf(this.schedule.day);
   const [hours, minutes] = this.schedule.time.split(":").map(Number);
 

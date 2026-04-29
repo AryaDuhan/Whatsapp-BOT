@@ -29,8 +29,15 @@ class MessageHandler {
 
   async handleMessage(message) {
     const userId = message.from.replace("@c.us", "");
-    const messageBody = message.sanitizedBody?.trim().toLowerCase() || "";
+    const originalMessageBody = message.sanitizedBody?.trim() || "";
+    const messageBody = originalMessageBody.toLowerCase();
     const user = await User.findByWhatsAppId(userId);
+
+    // Route commands to command handler
+    if (originalMessageBody.startsWith("/")) {
+      await this.commandHandler.handleCommand(message);
+      return;
+    }
 
     const currentState = this.userStates.get(userId);
     if (currentState?.type === "awaiting_timetable_image") {
@@ -39,7 +46,7 @@ class MessageHandler {
         this.commandHandler.activeCommand.delete(userId);
         await this.client.sendMessage(
           message.from,
-          "Image submission cancelled."
+          "Image submission cancelled.",
         );
         return;
       }
@@ -55,7 +62,7 @@ class MessageHandler {
     ) {
       await this.client.sendMessage(
         message.from,
-        "Please confirm or cancel the pending timetable before sending another command or image."
+        "Please confirm or cancel the pending timetable before sending another command or image.",
       );
       return;
     }
@@ -69,7 +76,7 @@ class MessageHandler {
       await this.client.sendMessage(
         message.from,
         "👋 Welcome! You need to register first to use this bot.\n\n" +
-          "Please type */start* to begin registration."
+          "Please type */start* to begin registration.",
       );
       return;
     }
@@ -103,7 +110,7 @@ class MessageHandler {
         message,
         this.client,
         user,
-        messageBody
+        messageBody,
       );
       return;
     }
@@ -118,7 +125,7 @@ class MessageHandler {
           await this.client.sendMessage(
             message.from,
             "❌ Please enter a valid name (2-50 characters).\n\n" +
-              "What's your name?"
+              "What's your name?",
           );
           return;
         }
@@ -135,7 +142,7 @@ class MessageHandler {
             "• Asia/Kolkata (for India)\n" +
             "• America/New_York (for EST)\n" +
             "• Europe/London (for UK)\n\n" +
-            'Or just type "india" if you\'re in India.'
+            'Or just type "india" if you\'re in India.',
         );
         break;
 
@@ -172,7 +179,7 @@ class MessageHandler {
               `• Type */help* to see all commands\n\n` +
               `Let's add your first subject! Use:\n` +
               `*/add <subject> on <day> at <time> for <hours>*\n\n` +
-              `Example: /add Mathematics on Monday at 10:00 for 2`
+              `Example: /add Mathematics on Monday at 10:00 for 2`,
           );
         } catch (error) {
           await this.client.sendMessage(
@@ -182,7 +189,7 @@ class MessageHandler {
               "• Asia/Kolkata\n" +
               "• America/New_York\n" +
               "• Europe/London\n\n" +
-              'Or type "india" for Indian timezone.'
+              'Or type "india" for Indian timezone.',
           );
         }
         break;
@@ -190,7 +197,7 @@ class MessageHandler {
       default:
         await this.client.sendMessage(
           message.from,
-          "Something went wrong with registration. Please type */start* to begin again."
+          "Something went wrong with registration. Please type */start* to begin again.",
         );
     }
   }
@@ -208,7 +215,7 @@ class MessageHandler {
       if (!record || !record.subjectId) {
         await this.client.sendMessage(
           message.from,
-          "🤔 I don't have any pending attendance confirmations for you."
+          "🤔 I don't have any pending attendance confirmations for you.",
         );
         return;
       }
@@ -225,7 +232,7 @@ class MessageHandler {
             `📚 Subject: ${record.subjectId.subjectName}\n` +
             `📅 Date: ${record.date.toDateString()}\n\n` +
             `Current attendance: ${record.subjectId.attendancePercentage}% ` +
-            `(${record.subjectId.attendedClasses}/${record.subjectId.totalClasses})`
+            `(${record.subjectId.attendedClasses}/${record.subjectId.totalClasses})`,
         );
       } else if (attendanceStatus === "absent") {
         await record.markAbsent(false);
@@ -254,7 +261,7 @@ class MessageHandler {
             `📚 Subject: ${record.subjectId.subjectName}\n` +
             `📅 Date: ${record.date.toDateString()}\n\n` +
             `Current attendance: ${record.subjectId.attendancePercentage}% ` +
-            `(${record.subjectId.attendedClasses}/${record.subjectId.totalClasses})`
+            `(${record.subjectId.attendedClasses}/${record.subjectId.totalClasses})`,
         );
       } else if (attendanceStatus === "holiday") {
         await record.markHoliday();
@@ -265,14 +272,14 @@ class MessageHandler {
           `🎉 *Marked as Holiday*\n\n` +
             `📚 Subject: ${record.subjectId.subjectName}\n` +
             `📅 Date: ${record.date.toDateString()}\n\n` +
-            `This class will not be counted in your attendance.`
+            `This class will not be counted in your attendance.`,
         );
       }
     } catch (error) {
       console.error("Error handling attendance response:", error);
       await this.client.sendMessage(
         message.from,
-        "❌ Sorry, there was an error recording your attendance. Please try again."
+        "❌ Sorry, there was an error recording your attendance. Please try again.",
       );
     }
   }
@@ -286,13 +293,13 @@ class MessageHandler {
       this.pendingRemoveConfirmations.delete(userId);
       await this.client.sendMessage(
         message.from,
-        "⏰ Confirmation timed out. Please use the /remove command again if you still wish to remove the subject."
+        "⏰ Confirmation timed out. Please use the /remove command again if you still wish to remove the subject.",
       );
       return;
     }
 
     const isConfirmed = ATTENDANCE_RESPONSES.POSITIVE.includes(
-      messageBody.toLowerCase().trim()
+      messageBody.toLowerCase().trim(),
     );
 
     this.pendingRemoveConfirmations.delete(userId);
@@ -303,7 +310,7 @@ class MessageHandler {
         if (!subject || subject.userId.toString() !== userId) {
           await this.client.sendMessage(
             message.from,
-            "❌ Error: Subject not found or it does not belong to you."
+            "❌ Error: Subject not found or it does not belong to you.",
           );
           return;
         }
@@ -315,7 +322,7 @@ class MessageHandler {
           message.from,
           `✅ *Subject Removed*\n\n` +
             `📚 "${subject.subjectName}" has been removed from your schedule.\n\n` +
-            `Your attendance history has been preserved.`
+            `Your attendance history has been preserved.`,
         );
       } catch (error) {
         this.logger.error("Error confirming subject removal:", error, {
@@ -323,13 +330,13 @@ class MessageHandler {
         });
         await this.client.sendMessage(
           message.from,
-          "❌ An error occurred while removing the subject."
+          "❌ An error occurred while removing the subject.",
         );
       }
     } else {
       await this.client.sendMessage(
         message.from,
-        `👍 Removal of "*${pendingConfirmation.subjectName}*" has been cancelled.`
+        `👍 Removal of "*${pendingConfirmation.subjectName}*" has been cancelled.`,
       );
     }
     this.commandHandler.activeCommand.delete(userId);
@@ -344,13 +351,13 @@ class MessageHandler {
       this.pendingClearListConfirmations.delete(userId);
       await this.client.sendMessage(
         message.from,
-        "⏰ Confirmation timed out. Please use the /clearlist command again."
+        "⏰ Confirmation timed out. Please use the /clearlist command again.",
       );
       return;
     }
 
     const isConfirmed = ATTENDANCE_RESPONSES.POSITIVE.includes(
-      messageBody.toLowerCase().trim()
+      messageBody.toLowerCase().trim(),
     );
 
     this.pendingClearListConfirmations.delete(userId);
@@ -360,19 +367,19 @@ class MessageHandler {
         await Subject.deleteMany({ userId: userId });
         await this.client.sendMessage(
           message.from,
-          "✅ All subjects have been successfully removed."
+          "✅ All subjects have been successfully removed.",
         );
       } catch (error) {
         this.logger.error("Error clearing subject list:", error, { userId });
         await this.client.sendMessage(
           message.from,
-          "❌ An error occurred while removing your subjects."
+          "❌ An error occurred while removing your subjects.",
         );
       }
     } else {
       await this.client.sendMessage(
         message.from,
-        "👍 Action cancelled. Your subjects have not been removed."
+        "👍 Action cancelled. Your subjects have not been removed.",
       );
     }
     this.commandHandler.activeCommand.delete(userId);
@@ -401,7 +408,7 @@ class MessageHandler {
     await this.client.sendMessage(
       message.from,
       "🤔 I didn't understand that.\n\n" +
-        "Type */help* to see available commands, or use */add* to add a subject."
+        "Type */help* to see available commands, or use */add* to add a subject.",
     );
   }
 
@@ -419,28 +426,32 @@ class MessageHandler {
   parseAttendanceResponse(messageBody) {
     if (
       ATTENDANCE_RESPONSES.POSITIVE.some(
-        (response) => messageBody === response || messageBody.includes(response)
+        (response) =>
+          messageBody === response || messageBody.includes(response),
       )
     ) {
       return "present";
     }
     if (
       ATTENDANCE_RESPONSES.NEGATIVE.some(
-        (response) => messageBody === response || messageBody.includes(response)
+        (response) =>
+          messageBody === response || messageBody.includes(response),
       )
     ) {
       return "absent";
     }
     if (
       ATTENDANCE_RESPONSES.MASS_BUNK.some(
-        (response) => messageBody === response || messageBody.includes(response)
+        (response) =>
+          messageBody === response || messageBody.includes(response),
       )
     ) {
       return "massBunked";
     }
     if (
       ATTENDANCE_RESPONSES.HOLIDAY.some(
-        (response) => messageBody === response || messageBody.includes(response)
+        (response) =>
+          messageBody === response || messageBody.includes(response),
       )
     ) {
       return "holiday";
@@ -459,7 +470,7 @@ class MessageHandler {
           "🤖 *AI Timetable Parser*\n\n" +
             "Sorry, the AI timetable parser is not configured.\n\n" +
             "Please add your subjects manually using:\n" +
-            "*/add <subject> on <day> at <time> for <hours>*"
+            "*/add <subject> on <day> at <time> for <hours>*",
         );
         return;
       }
@@ -468,7 +479,7 @@ class MessageHandler {
         message.from,
         "🔍 *Processing Timetable Image*\n\n" +
           "I'm analyzing your timetable image...\n" +
-          "This may take a few seconds."
+          "This may take a few seconds.",
       );
 
       const media = await message.downloadMedia();
@@ -480,7 +491,7 @@ class MessageHandler {
 
       const parsedClasses = await this.timetableParser.parseTimetableImage(
         imageBuffer,
-        userId
+        userId,
       );
 
       if (parsedClasses.length === 0) {
@@ -493,7 +504,7 @@ class MessageHandler {
             "• The timetable is well-structured\n" +
             "• Text is not too small or blurry\n\n" +
             "You can still add subjects manually using:\n" +
-            "*/add <subject> on <day> at <time> for <hours>*"
+            "*/add <subject> on <day> at <time> for <hours>*",
         );
         return;
       }
@@ -505,7 +516,7 @@ class MessageHandler {
         const existingSubject = await Subject.findByUserAndNameAndDay(
           user._id,
           classData.subject,
-          classData.day
+          classData.day,
         );
         if (existingSubject) {
           existingClasses.push(classData);
@@ -564,7 +575,7 @@ class MessageHandler {
           "• Making sure the text is readable\n" +
           "• Using a well-structured timetable\n\n" +
           "Or add subjects manually:\n" +
-          "*/add <subject> on <day> at <time> for <hours>*"
+          "*/add <subject> on <day> at <time> for <hours>*",
       );
     }
   }
@@ -572,7 +583,7 @@ class MessageHandler {
   isTimetableConfirmationResponse(messageBody) {
     const confirmationKeywords = ["yes", "confirm", "no", "cancel", "skip"];
     return confirmationKeywords.some((keyword) =>
-      messageBody.toLowerCase().includes(keyword)
+      messageBody.toLowerCase().includes(keyword),
     );
   }
 
@@ -580,7 +591,7 @@ class MessageHandler {
     message,
     client,
     user,
-    messageBody
+    messageBody,
   ) {
     const userId = message.from.replace("@c.us", "");
     const pendingConfirmation = this.pendingTimetableConfirmations.get(userId);
@@ -597,7 +608,7 @@ class MessageHandler {
         message.from,
         "⏰ *Confirmation expired*\n\n" +
           "The timetable confirmation has expired.\n" +
-          "Please send the timetable image again."
+          "Please send the timetable image again.",
       );
       return;
     }
@@ -618,7 +629,7 @@ class MessageHandler {
           "Please reply with:\n" +
           '• *"yes"* or *"confirm"* - Add all classes\n' +
           '• *"no"* or *"cancel"* - Cancel and don\'t add any\n' +
-          '• *"skip"* - Skip this confirmation (auto-add)'
+          '• *"skip"* - Skip this confirmation (auto-add)',
       );
       return;
     }
@@ -631,7 +642,7 @@ class MessageHandler {
         "❌ *Timetable addition cancelled*\n\n" +
           "No classes were added to your schedule.\n\n" +
           "You can still add subjects manually using:\n" +
-          "*/add <subject> on <day> at <time> for <hours>*"
+          "*/add <subject> on <day> at <time> for <hours>*",
       );
       return;
     }
@@ -645,7 +656,7 @@ class MessageHandler {
         const existingSubject = await Subject.findByUserAndNameAndDay(
           user._id,
           classData.subject,
-          classData.day
+          classData.day,
         );
         if (existingSubject) {
           failedClasses.push({
